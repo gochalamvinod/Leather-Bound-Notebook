@@ -7638,7 +7638,7 @@ app.listen = function(...args) {
 };
 
 if (require.main === module) {
-  const srv = app.listen(PORT, () => {
+  const srv = app.listen(PORT, '0.0.0.0', () => {
     console.log('');
     console.log('  📖  Leatherbound Notebook is running (SQLite backed).');
     console.log(`      Open http://localhost:${PORT} in your browser.`);
