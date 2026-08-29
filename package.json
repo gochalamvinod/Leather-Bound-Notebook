@@ -1,0 +1,44 @@
+{
+  "name": "leatherbound-notebook",
+  "version": "2.0.0",
+  "description": "A private, encrypted, 3D page-flipping notebook you run on your own machine.",
+  "author": "Gochalam Vinod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gochalamvinod/LeatherBound-Notebook.git"
+  },
+  "main": "server.js",
+  "scripts": {
+    "dev": "concurrently -n \"server,client\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "vite",
+    "dev:server": "node server.js",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "start": "node server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "private": true,
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.19.2",
+    "hls.js": "^1.7.1",
+    "html2canvas": "^1.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.165.0",
+    "xlsx": "npm:@e965/xlsx@^0.20.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.165.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

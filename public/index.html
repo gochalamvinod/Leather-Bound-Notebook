@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Leatherbound Notebook</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="room">
+
+  <!-- ============ LOCK SCREEN ============ -->
+  <section id="lockScreen" class="lock-screen">
+    <div class="lock-card">
+      <div class="clasp" id="clasp" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="40" height="40">
+          <rect x="10" y="26" width="44" height="30" rx="4" fill="none" stroke="currentColor" stroke-width="3"/>
+          <path id="claspShackle" d="M20 26 V18 a12 12 0 0 1 24 0 V26" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="32" cy="40" r="3.5" fill="currentColor"/>
+        </svg>
+      </div>
+      <h1 id="lockTitle">Leatherbound Notebook</h1>
+      <p id="lockSubtitle" class="lock-sub">Log in to your private encrypted vault</p>
+
+      <!-- Navigation Tabs on Lock Screen -->
+      <div class="lock-tabs" role="tablist">
+        <button type="button" class="lock-tab-btn active" id="tabLogin" data-tab="login">🔑 Log In</button>
+        <button type="button" class="lock-tab-btn" id="tabCreateUser" data-tab="create">✨ Create User</button>
+      </div>
+
+      <!-- Log In / Unlock Form -->
+      <div id="viewLogin" class="lock-tab-view active">
+        <div id="selectedNotebookBanner" class="selected-notebook-banner" hidden>
+          <span class="banner-spine" id="bannerSpine"></span>
+          <div class="banner-info">
+            <span class="banner-title" id="selectedNotebookTitle">My Notebook</span>
+            <span class="banner-owner" id="selectedNotebookOwner">Owner: default</span>
+          </div>
+          <button type="button" id="clearSelectedNotebookBtn" class="banner-clear-btn" title="Clear selection">✕</button>
+        </div>
+
+        <form id="lockForm" class="lock-form">
+          <label class="field" id="usernameField">
+            <span>Username / Account</span>
+            <input type="text" id="usernameInput" placeholder="e.g. vinod (or leave blank for default)" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-input-wrapper">
+              <input type="password" id="passwordInput" autocomplete="current-password" required placeholder="Enter password" />
+              <button type="button" class="toggle-password-btn" data-target="passwordInput" title="Show / Hide password">👁️</button>
+            </div>
+          </label>
+          <label class="field" id="confirmField" hidden>
+            <span>Confirm password</span>
+            <div class="password-input-wrapper">
+              <input type="password" id="confirmInput" autocomplete="new-password" placeholder="Confirm password" />
+              <button type="button" class="toggle-password-btn" data-target="confirmInput" title="Show / Hide password">👁️</button>
+            </div>
+          </label>
+          <button type="submit" id="lockSubmit" class="brass-btn">Unlock</button>
+          <p id="lockError" class="lock-error" role="alert"></p>
+        </form>
+        <div class="lock-card-footer-switch">
+          <span>Don't have an account?</span>
+          <button type="button" id="switchToCreateUserBtn" class="brass-text-link">Create User &amp; Notebook</button>
+        </div>
+      </div>
+
+      <!-- Tab 3: Create User / Register Form -->
+      <div id="viewCreateUser" class="lock-tab-view" hidden>
+        <form id="createUserForm" class="lock-form create-user-form">
+          <label class="field">
+            <span>Choose Username</span>
+            <input type="text" id="createUsernameInput" required placeholder="e.g. vinod, writer, alex" autocomplete="username" maxlength="30" />
+          </label>
+          <label class="field">
+            <span>Notebook Title</span>
+            <input type="text" id="createNotebookTitleInput" required placeholder="e.g. Master Journal, Research Notes" maxlength="80" value="My Notebook" />
+          </label>
+          <label class="field">
+            <span>Leather Cover Style</span>
+            <div class="cover-color-palette cover-color-palette--compact">
+              <label class="color-choice">
+                <input type="radio" name="createCoverColor" value="brown" checked />
+                <span class="cover-chip chip-brown">Classic Brown</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="createCoverColor" value="green" />
+                <span class="cover-chip chip-green">Emerald Pine</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="createCoverColor" value="navy" />
+                <span class="cover-chip chip-navy">Midnight Navy</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="createCoverColor" value="burgundy" />
+                <span class="cover-chip chip-burgundy">Royal Burgundy</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="createCoverColor" value="black" />
+                <span class="cover-chip chip-black">Obsidian Noir</span>
+              </label>
+            </div>
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <div class="password-input-wrapper">
+              <input type="password" id="createPasswordInput" required placeholder="At least 4 characters" autocomplete="new-password" />
+              <button type="button" class="toggle-password-btn" data-target="createPasswordInput" title="Show / Hide password">👁️</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>Confirm Password</span>
+            <div class="password-input-wrapper">
+              <input type="password" id="createConfirmPasswordInput" required placeholder="Re-enter password" autocomplete="new-password" />
+              <button type="button" class="toggle-password-btn" data-target="createConfirmPasswordInput" title="Show / Hide password">👁️</button>
+            </div>
+          </label>
+          <label class="show-password-checkbox-label">
+            <input type="checkbox" id="toggleShowAllPasswords" />
+            <span>Show passwords while typing</span>
+          </label>
+          <button type="submit" id="createUserSubmit" class="brass-btn">Create User &amp; Notebook</button>
+          <p id="createUserError" class="lock-error" role="alert"></p>
+        </form>
+        <div class="lock-card-footer-switch">
+          <span>Already have an account?</span>
+          <button type="button" id="switchToLoginBtn" class="brass-text-link">Log In / Unlock</button>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ MAIN APP ============ -->
+  <section id="app" class="app" hidden>
+
+    <header class="toolbar">
+      <div class="bookshelf-wrapper">
+        <button type="button" id="bookshelfBtn" class="bookshelf-trigger-btn" title="Bookshelf / Switch Books">
+          <span class="bookshelf-book-icon">📚</span>
+          <span id="currentBookTitle" class="current-book-title">My Notebook</span>
+          <span class="bookshelf-caret">▾</span>
+        </button>
+      </div>
+
+      <div class="tool-group">
+        <select id="fontSelect" title="Font"></select>
+        <select id="sizeSelect" title="Size"></select>
+      </div>
+
+      <div class="tool-group">
+        <button type="button" data-cmd="bold" class="icon-btn" title="Bold"><b>B</b></button>
+        <button type="button" data-cmd="italic" class="icon-btn" title="Italic"><i>I</i></button>
+        <button type="button" data-cmd="underline" class="icon-btn" title="Underline"><u>U</u></button>
+      </div>
+
+      <div class="tool-group">
+        <button type="button" data-cmd="justifyLeft" class="icon-btn" title="Align left">≡◄</button>
+        <button type="button" data-cmd="justifyCenter" class="icon-btn" title="Align center">≡◆</button>
+        <button type="button" data-cmd="justifyRight" class="icon-btn" title="Align right">►≡</button>
+      </div>
+
+      <div class="tool-group">
+        <label class="swatch" title="Text color">
+          A
+          <input type="color" id="colorInput" value="#2c2416" />
+        </label>
+        <label class="swatch highlight" title="Highlight">
+          H
+          <input type="color" id="highlightInput" value="#f6e27a" />
+        </label>
+        <button type="button" id="emojiBtn" class="icon-btn" title="Insert Emoji">😀</button>
+        <button type="button" id="imageBtn" class="icon-btn" title="Insert image from file">🖼</button>
+        <button type="button" id="videoBtn" class="icon-btn" title="Insert Video / Audio (up to 1GB)">🎥</button>
+        <button type="button" id="linkBtn" class="icon-btn" title="Insert a live link">🔗</button>
+        <button type="button" id="searchEmbedBtn" class="icon-btn" title="Search the Web & Embed">🔍</button>
+      </div>
+
+      <div class="tool-group right">
+        <span id="saveStatus" class="save-status">Saved</span>
+        <div id="currentUserBadge" class="current-user-badge" title="Active user">
+          <span class="user-icon">👤</span>
+          <span id="currentUserName" class="current-user-name">default</span>
+        </div>
+        <button type="button" id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
+        <button type="button" id="lockBtn" class="icon-btn" title="Lock Vault">🔒</button>
+      </div>
+    </header>
+
+    <!-- ============ EMOJI PICKER POPOVER ============ -->
+    <div id="emojiPicker" class="emoji-picker-popover" hidden>
+      <div class="emoji-header">
+        <input type="text" id="emojiSearch" class="emoji-search-input" placeholder="Search emojis (e.g. smile, heart, book)..." />
+        <button type="button" id="closeEmojiPickerBtn" class="emoji-close-btn" title="Close">✕</button>
+      </div>
+      <div class="emoji-categories" id="emojiCategories">
+        <button type="button" class="emoji-cat-btn active" data-cat="smileys" title="Smileys & Emotion">😀</button>
+        <button type="button" class="emoji-cat-btn" data-cat="gestures" title="People & Gestures">👋</button>
+        <button type="button" class="emoji-cat-btn" data-cat="books" title="Books & Study">📚</button>
+        <button type="button" class="emoji-cat-btn" data-cat="nature" title="Nature & Animals">🌿</button>
+        <button type="button" class="emoji-cat-btn" data-cat="food" title="Food & Drink">☕</button>
+        <button type="button" class="emoji-cat-btn" data-cat="objects" title="Objects & Tech">💡</button>
+        <button type="button" class="emoji-cat-btn" data-cat="symbols" title="Symbols & Hearts">✨</button>
+      </div>
+      <div class="emoji-grid" id="emojiGrid">
+        <!-- Dynamically rendered emojis -->
+      </div>
+    </div>
+
+    <!-- ============ MEDIA UPLOAD PROGRESS TOAST ============ -->
+    <div id="mediaUploadToast" class="media-upload-toast" hidden>
+      <div class="toast-content">
+        <div class="toast-header-row">
+          <span class="toast-icon">🎥</span>
+          <span class="toast-title" id="toastTitle">Uploading Media...</span>
+        </div>
+        <div class="toast-progress-bar-bg">
+          <div class="toast-progress-bar-fill" id="toastProgressFill" style="width: 0%;"></div>
+        </div>
+        <div class="toast-stats" id="toastStats">0% (0 MB / 0 MB)</div>
+      </div>
+    </div>
+
+    <input type="file" id="imageFile" accept="image/*" hidden />
+    <input type="file" id="videoFile" accept="video/*,audio/*" hidden />
+
+    <main class="book-room">
+      <div class="book" id="book">
+
+        <div class="page-viewport" id="pageViewport">
+
+          <!-- LEFT PAGE -->
+          <div class="page-slot slot-left" id="slotLeft">
+            <div class="page under" id="underLeft"></div>
+            <div class="page current" id="leftPage" contenteditable="true" spellcheck="false" data-slot="left"></div>
+            <div class="flip-layer pivot-right" id="flipLayerLeft">
+              <div class="flip-face front"></div>
+              <div class="flip-face back"></div>
+            </div>
+          </div>
+
+          <div class="spine-crease" aria-hidden="true"></div>
+
+          <!-- RIGHT PAGE -->
+          <div class="page-slot slot-right" id="slotRight">
+            <div class="page under" id="underRight"></div>
+            <div class="page current" id="rightPage" contenteditable="true" spellcheck="false" data-slot="right"></div>
+            <div class="page-empty" id="rightEmpty" hidden>
+              <span>The notebook ends here.</span>
+              <button type="button" id="addPageInline" class="brass-link">+ Add a page</button>
+            </div>
+            <div class="flip-layer pivot-left" id="flipLayerRight">
+              <div class="flip-face front"></div>
+              <div class="flip-face back"></div>
+            </div>
+          </div>
+
+        </div>
+
+        <button type="button" id="prevBtn" class="page-turn left" title="Previous spread">‹</button>
+        <button type="button" id="nextBtn" class="page-turn right" title="Next spread">›</button>
+      </div>
+
+      <div class="page-controls">
+        <button type="button" id="addPageBtn" class="brass-link">+ Add page</button>
+        <span id="pageIndicator" class="page-indicator">Spread 1 of 1</span>
+        <button type="button" id="deletePageBtn" class="brass-link danger">Delete page</button>
+      </div>
+    </main>
+
+    <!-- ============ BOOKSHELF MODAL ============ -->
+    <div id="bookshelfModal" class="modal-overlay" hidden>
+      <div class="modal-backdrop" id="bookshelfBackdrop"></div>
+      <div class="bookshelf-card">
+        <div class="modal-header">
+          <h2>📚 Your Library</h2>
+          <button type="button" id="closeBookshelfBtn" class="modal-close-btn" title="Close">✕</button>
+        </div>
+        <p class="modal-subtitle">Switch between your private leatherbound notebooks or create a new one.</p>
+        
+        <div class="bookshelf-grid" id="bookshelfGrid">
+          <!-- Dynamically populated books -->
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="openNewBookModalBtn" class="brass-btn">+ New Notebook</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ NEW BOOK MODAL ============ -->
+    <div id="newBookModal" class="modal-overlay" hidden>
+      <div class="modal-backdrop" id="newBookBackdrop"></div>
+      <div class="new-book-card">
+        <div class="modal-header">
+          <h2>Create New Notebook</h2>
+          <button type="button" id="closeNewBookBtn" class="modal-close-btn" title="Close">✕</button>
+        </div>
+        
+        <form id="newBookForm" class="new-book-form">
+          <label class="field">
+            <span>Notebook Title</span>
+            <input type="text" id="newBookTitleInput" placeholder="e.g. Work Journal, Research, Diary" required maxlength="80" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>Leather Cover Style</span>
+            <div class="cover-color-palette">
+              <label class="color-choice">
+                <input type="radio" name="coverColor" value="brown" checked />
+                <span class="cover-chip chip-brown">Classic Brown</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="coverColor" value="green" />
+                <span class="cover-chip chip-green">Emerald Pine</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="coverColor" value="navy" />
+                <span class="cover-chip chip-navy">Midnight Navy</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="coverColor" value="burgundy" />
+                <span class="cover-chip chip-burgundy">Royal Burgundy</span>
+              </label>
+              <label class="color-choice">
+                <input type="radio" name="coverColor" value="black" />
+                <span class="cover-chip chip-black">Obsidian Noir</span>
+              </label>
+            </div>
+          </label>
+
+          <div class="modal-actions">
+            <button type="button" id="cancelNewBookBtn" class="cancel-btn">Cancel</button>
+            <button type="submit" class="brass-btn">Create Notebook</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ============ SEARCH & EMBED MODAL ============ -->
+    <div id="searchModal" class="modal-overlay" hidden>
+      <div class="modal-backdrop" id="searchBackdrop"></div>
+      <div class="search-card">
+        <div class="modal-header">
+          <h2>🌐 Search Web & Embed Content</h2>
+          <button type="button" id="closeSearchModalBtn" class="modal-close-btn" title="Close">✕</button>
+        </div>
+        <p class="modal-subtitle">Search the live web or paste any URL (YouTube, Wikipedia, TradingView, Google, Docs) to embed inside your notebook.</p>
+        
+        <form id="searchForm" class="search-form">
+          <div class="search-input-group">
+            <input type="text" id="searchQueryInput" placeholder="Enter search query or paste URL (https://...)" required autocomplete="off" />
+            <button type="submit" class="brass-btn search-submit-btn">Search / Embed</button>
+          </div>
+        </form>
+
+        <div class="search-quick-links">
+          <span class="quick-label">Quick Embeds:</span>
+          <button type="button" class="quick-chip" data-url="https://en.wikipedia.org/wiki/Main_Page">Wikipedia</button>
+          <button type="button" class="quick-chip" data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ">YouTube</button>
+          <button type="button" class="quick-chip" data-url="https://www.tradingview.com/chart/">TradingView</button>
+          <button type="button" class="quick-chip" data-url="https://news.ycombinator.com">Hacker News</button>
+          <button type="button" class="quick-chip" data-url="https://www.google.com">Google</button>
+        </div>
+
+        <div class="search-results-wrapper" id="searchResultsWrapper" hidden>
+          <div class="search-results-header">Search Results:</div>
+          <div class="search-results-list" id="searchResultsList"></div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 14px; justify-content: flex-end;">
+          <button type="button" id="cancelSearchModalBtn" class="cancel-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SETTINGS DRAWER ============ -->
+    <div id="settingsDrawer" class="settings-drawer" hidden>
+      <div class="settings-card">
+        <h2>Settings</h2>
+        <label class="field">
+          <span>New password</span>
+          <input type="password" id="newPasswordInput" autocomplete="new-password" />
+        </label>
+        <label class="field">
+          <span>Confirm new password</span>
+          <input type="password" id="newPasswordConfirm" autocomplete="new-password" />
+        </label>
+        <button type="button" id="changePasswordBtn" class="brass-btn">Change password</button>
+        <p id="settingsMsg" class="lock-error" role="status"></p>
+        <button type="button" id="closeSettingsBtn" class="brass-link">Close</button>
+      </div>
+    </div>
+
+  </section>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
