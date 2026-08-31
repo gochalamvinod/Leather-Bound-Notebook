@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Leatherbound Notebook — Support & SMTP Setup
+title Leatherbound Notebook — Support Email Setup
 
 cd /d "%~dp0"
 
@@ -8,9 +8,8 @@ echo ===============================================================
 echo       Leatherbound Notebook — Support Email & SMTP Setup       
 echo ===============================================================
 echo.
-echo This utility configures your Support Email and SMTP settings.
-echo These credentials will be stored in your local .env file.
-echo (Your .env file is gitignored and will NOT be pushed to Git)
+echo This utility configures your Support Email and SMTP credentials.
+echo It writes them to your local .env file ^(which is gitignored^).
 echo.
 echo ===============================================================
 echo.
@@ -18,29 +17,31 @@ echo.
 :: 1. Prompt for Support Email
 :ASK_EMAIL
 set "SUP_EMAIL="
-set /p SUP_EMAIL="[1/4] Enter Support Email (e.g. support@yourdomain.com): "
+set /p SUP_EMAIL="Enter Support Email (e.g. support@gochalamvinod.tech): "
 if "%SUP_EMAIL%"=="" (
     echo [ERROR] Email cannot be empty. Please enter an email address.
+    echo.
     goto ASK_EMAIL
 )
 
 :: 2. Prompt for Support Password
 :ASK_PASS
 set "SUP_PASS="
-set /p SUP_PASS="[2/4] Enter Support Email Password / App Password: "
+set /p SUP_PASS="Enter Support Email Password: "
 if "%SUP_PASS%"=="" (
     echo [ERROR] Password cannot be empty.
+    echo.
     goto ASK_PASS
 )
 
 :: 3. Prompt for SMTP Host
 set "SUP_HOST="
-set /p SUP_HOST="[3/4] Enter SMTP Host [Press Enter for smtp.titan.email]: "
+set /p SUP_HOST="Enter SMTP Host [Press Enter for smtp.titan.email]: "
 if "%SUP_HOST%"=="" set "SUP_HOST=smtp.titan.email"
 
 :: 4. Prompt for SMTP Port
 set "SUP_PORT="
-set /p SUP_PORT="[4/4] Enter SMTP Port [Press Enter for 465]: "
+set /p SUP_PORT="Enter SMTP Port [Press Enter for 465]: "
 if "%SUP_PORT%"=="" set "SUP_PORT=465"
 
 :: 5. Determine secure flag
@@ -50,7 +51,7 @@ if "%SUP_PORT%"=="25" set "SUP_SECURE=false"
 
 :: Write to .env
 echo.
-echo Writing settings to .env...
+echo Saving settings to .env...
 
 (
     echo # Server Port
@@ -78,6 +79,12 @@ echo  - Support User : %SUP_EMAIL%
 echo  - SMTP Server  : %SUP_HOST%:%SUP_PORT% (Secure: %SUP_SECURE%)
 echo ===============================================================
 echo.
-echo You can now run STARTER.bat or 'npm start' to launch your notebook.
+echo Testing SMTP connection...
+node -e "require('dotenv').config(); const nodemailer = require('nodemailer'); const t = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: parseInt(process.env.SMTP_PORT, 10), secure: process.env.SMTP_SECURE === 'true', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }); t.verify().then(() => console.log('✅ [SUCCESS] SMTP Credentials Verified with Server!')).catch(err => console.log('⚠️ [WARNING] Could not verify with SMTP server: ' + err.message));"
+
+echo.
+echo Configuration complete! You can now start the application:
+echo   npm start     (Production)
+echo   npm run dev   (Development)
 echo.
 pause
