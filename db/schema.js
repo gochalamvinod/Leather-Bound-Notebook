@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL COLLATE NOCASE,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  preferred_name TEXT,
   role TEXT DEFAULT 'user',
   tier TEXT DEFAULT 'classic',
   is_admin INTEGER DEFAULT 0,
@@ -29,7 +32,10 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL,
   encrypted_profile TEXT,
   admin_envelope TEXT,
-  active_session_id TEXT
+  active_session_id TEXT,
+  email TEXT,
+  google_id TEXT,
+  auth_provider TEXT DEFAULT 'local'
 );
 
 -- 2. Books table (Notebooks)
@@ -118,6 +124,8 @@ CREATE TABLE IF NOT EXISTS redeem_keys (
 
 -- Relational & Query Optimization Indexes
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL AND email != '';
+CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 

@@ -124,34 +124,61 @@ const users = {
     id,
     username,
     password_hash = null,
+    passwordHash = null,
     salt = null,
+    first_name = null,
+    firstName = null,
+    last_name = null,
+    lastName = null,
+    preferred_name = null,
+    preferredName = null,
     role = 'user',
     tier = 'classic',
     is_admin = 0,
+    isAdmin = 0,
     is_active = 1,
+    isActive = 1,
     encrypted_profile = null,
+    encryptedProfile = null,
     admin_envelope = null,
+    adminEnvelope = null,
+    active_session_id = null,
+    activeSessionId = null,
+    email = null,
+    google_id = null,
+    googleId = null,
+    auth_provider = 'local',
+    authProvider = 'local',
     created_at,
+    createdAt,
     updated_at,
+    updatedAt,
   } = {}) {
     const now = new Date().toISOString();
     const uid = id || `user_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const uname = normalizeParam(username);
-    const pHash = password_hash !== undefined && password_hash !== null ? password_hash : '';
+    const pHash = password_hash !== undefined && password_hash !== null ? password_hash : (passwordHash !== undefined && passwordHash !== null ? passwordHash : '');
     const s = salt !== undefined && salt !== null ? salt : '';
+    const fName = normalizeParam(first_name !== undefined && first_name !== null ? first_name : firstName);
+    const lName = normalizeParam(last_name !== undefined && last_name !== null ? last_name : lastName);
+    const pName = normalizeParam(preferred_name !== undefined && preferred_name !== null ? preferred_name : preferredName);
     const r = role !== undefined && role !== null ? role : 'user';
     const t = tier !== undefined && tier !== null ? tier : 'classic';
-    const cAt = created_at || now;
-    const uAt = updated_at || now;
-    const adminFlag = is_admin ? 1 : 0;
-    const activeFlag = is_active !== undefined ? (is_active ? 1 : 0) : 1;
-    const encProfile = normalizeParam(encrypted_profile);
-    const adminEnv = normalizeParam(admin_envelope);
+    const cAt = created_at || createdAt || now;
+    const uAt = updated_at || updatedAt || now;
+    const adminFlag = is_admin || isAdmin ? 1 : 0;
+    const activeFlag = is_active !== undefined ? (is_active ? 1 : 0) : (isActive !== undefined ? (isActive ? 1 : 0) : 1);
+    const encProfile = normalizeParam(encrypted_profile !== undefined && encrypted_profile !== null ? encrypted_profile : encryptedProfile);
+    const adminEnv = normalizeParam(admin_envelope !== undefined && admin_envelope !== null ? admin_envelope : adminEnvelope);
+    const userEmail = normalizeParam(email ? email.trim().toLowerCase() : null);
+    const gId = normalizeParam(google_id !== undefined && google_id !== null ? google_id : googleId);
+    const authProv = normalizeParam(auth_provider || authProvider || 'local');
+    const actSessId = normalizeParam(active_session_id !== undefined && active_session_id !== null ? active_session_id : activeSessionId);
 
     runSync(
-      `INSERT INTO users (id, username, password_hash, salt, role, tier, is_admin, is_active, created_at, updated_at, encrypted_profile, admin_envelope)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uid, uname, pHash, s, r, t, adminFlag, activeFlag, cAt, uAt, encProfile, adminEnv]
+      `INSERT INTO users (id, username, password_hash, salt, first_name, last_name, preferred_name, role, tier, is_admin, is_active, created_at, updated_at, encrypted_profile, admin_envelope, active_session_id, email, google_id, auth_provider)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [uid, uname, pHash, s, fName, lName, pName, r, t, adminFlag, activeFlag, cAt, uAt, encProfile, adminEnv, actSessId, userEmail, gId, authProv]
     );
     return this.findById(uid);
   },
@@ -159,6 +186,16 @@ const users = {
   findByUsername(username) {
     if (!username) return null;
     return getSync(`SELECT * FROM users WHERE username = ? COLLATE NOCASE`, [normalizeParam(username)]);
+  },
+
+  findByEmail(email) {
+    if (!email) return null;
+    return getSync(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`, [normalizeParam(email.trim().toLowerCase())]);
+  },
+
+  findByGoogleId(googleId) {
+    if (!googleId) return null;
+    return getSync(`SELECT * FROM users WHERE google_id = ?`, [normalizeParam(googleId)]);
   },
 
   findById(id) {
@@ -169,13 +206,27 @@ const users = {
   update(id, fields = {}) {
     const sets = [];
     const params = [];
-    for (const [key, val] of Object.entries(fields)) {
+    for (let [key, val] of Object.entries(fields)) {
       if (key === 'id') continue;
+      if (key === 'firstName') key = 'first_name';
+      if (key === 'lastName') key = 'last_name';
+      if (key === 'preferredName') key = 'preferred_name';
+      if (key === 'passwordHash') key = 'password_hash';
+      if (key === 'isAdmin') key = 'is_admin';
+      if (key === 'isActive') key = 'is_active';
+      if (key === 'encryptedProfile') key = 'encrypted_profile';
+      if (key === 'adminEnvelope') key = 'admin_envelope';
+      if (key === 'activeSessionId') key = 'active_session_id';
+      if (key === 'googleId') key = 'google_id';
+      if (key === 'authProvider') key = 'auth_provider';
+      if (key === 'createdAt') key = 'created_at';
+      if (key === 'updatedAt') key = 'updated_at';
+
       sets.push(`${key} = ?`);
       params.push(normalizeParam(val));
     }
     if (sets.length === 0) return this.findById(id);
-    if (!fields.updated_at) {
+    if (!fields.updated_at && !fields.updatedAt) {
       sets.push(`updated_at = ?`);
       params.push(new Date().toISOString());
     }
@@ -191,7 +242,7 @@ const users = {
   },
 
   listAll() {
-    return allSync(`SELECT id, username, role, tier, is_admin, is_active, created_at, updated_at, encrypted_profile, admin_envelope FROM users ORDER BY created_at ASC`);
+    return allSync(`SELECT id, username, first_name, last_name, preferred_name, role, tier, is_admin, is_active, email, created_at, updated_at, encrypted_profile, admin_envelope FROM users ORDER BY created_at ASC`);
   },
 
   list(options = {}) {
@@ -817,16 +868,27 @@ const redeemKeys = {
 function initDb(dbPath, options = {}) {
   const resolvedPath = dbPath || resolveDefaultDbPath();
   const driver = new SQLiteDriver(resolvedPath, options);
+  
+  // 1. Safe column migration for existing user databases prior to index creation in SCHEMA_DDL
+  try { driver.exec(`ALTER TABLE users ADD COLUMN first_name TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN last_name TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN preferred_name TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'classic';`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN encrypted_profile TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN admin_envelope TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN active_session_id TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN email TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN google_id TEXT;`); } catch (e) {}
+  try { driver.exec(`ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local';`); } catch (e) {}
+
+  // 2. Initialize core schema DDL and indexes
   driver.exec(SCHEMA_DDL);
-  try {
-    driver.exec(`ALTER TABLE users ADD COLUMN admin_envelope TEXT;`);
-  } catch (e) {}
-  try {
-    driver.exec(`ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'classic';`);
-  } catch (e) {}
-  try {
-    driver.exec(`ALTER TABLE users ADD COLUMN active_session_id TEXT;`);
-  } catch (e) {}
+
+  try { driver.exec(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`); } catch (e) {}
+  try { driver.exec(`CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);`); } catch (e) {}
   driver.users = users;
   driver.books = books;
   driver.pages = pages;
