@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { CoverTheme, LockTab } from '../../types/notebook';
 import LoginTab from './LoginTab';
 import RegisterTab from './RegisterTab';
+import PasswordResetModal from './PasswordResetModal';
 import LeatherboundLogo from '../ui/LeatherboundLogo';
 
 export interface LockScreenProps {
@@ -25,13 +26,17 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlockSuccess }) => {
   const [activeTab, setActiveTab] = useState<LockTab>(setupNeeded ? 'create' : 'login');
   const [prefilledUsername, setPrefilledUsername] = useState<string>('');
   const [prefilledPassword, setPrefilledPassword] = useState<string>('');
+  const [prefilledEmail, setPrefilledEmail] = useState<string>('');
   const [autoRedirectNotice, setAutoRedirectNotice] = useState<string | null>(null);
   const [shaking, setShaking] = useState<boolean>(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
+  const [resetPrefillEmail, setResetPrefillEmail] = useState<string>('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const handleSwitchToCreate = (userToPrefill?: string, passToPrefill?: string, isAuto?: boolean) => {
+  const handleSwitchToCreate = (userToPrefill?: string, passToPrefill?: string, isAuto?: boolean, emailToPrefill?: string) => {
     if (userToPrefill !== undefined) setPrefilledUsername(userToPrefill);
     if (passToPrefill !== undefined) setPrefilledPassword(passToPrefill);
+    if (emailToPrefill !== undefined) setPrefilledEmail(emailToPrefill);
     if (isAuto && userToPrefill) {
       setAutoRedirectNotice(`No account found for "${userToPrefill}". Switched to account creation.`);
     } else {
@@ -44,6 +49,13 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlockSuccess }) => {
     if (userToPrefill !== undefined) setPrefilledUsername(userToPrefill);
     setAutoRedirectNotice(null);
     setActiveTab('login');
+  };
+
+  const handleOpenPasswordReset = (emailPrefill?: string) => {
+    if (emailPrefill) {
+      setResetPrefillEmail(emailPrefill);
+    }
+    setIsResetModalOpen(true);
   };
 
   useEffect(() => {
@@ -259,6 +271,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlockSuccess }) => {
               onClearSelectedBook={handleClearSelectedBook}
               onUnlock={handleUnlock}
               onSwitchToCreate={handleSwitchToCreate}
+              onOpenPasswordReset={handleOpenPasswordReset}
               lockedOut={lockedOut}
               remainingSeconds={remainingSeconds}
               error={error}
@@ -273,11 +286,23 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlockSuccess }) => {
               loading={loading}
               initialUsername={prefilledUsername}
               initialPassword={prefilledPassword}
+              initialEmail={prefilledEmail}
               autoNotice={autoRedirectNotice}
             />
           )}
         </div>
       </div>
+
+      {/* Password Reset OTP Modal */}
+      <PasswordResetModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        initialEmail={resetPrefillEmail || prefilledEmail}
+        onSuccess={() => {
+          setIsResetModalOpen(false);
+          setActiveTab('login');
+        }}
+      />
     </section>
   );
 };

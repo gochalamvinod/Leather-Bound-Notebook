@@ -20,9 +20,11 @@
   "private": true,
   "license": "UNLICENSED",
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "hls.js": "^1.7.1",
     "html2canvas": "^1.4.1",
+    "nodemailer": "^9.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.165.0",

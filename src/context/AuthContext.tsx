@@ -1,7 +1,17 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../lib/api/client';
 import { BookshelfEntry, CoverTheme, UserEntry } from '../types/notebook';
-import { OkResponse, SetupResponse, StatusResponse, UserMeResponse } from '../types/api';
+import {
+  OkResponse,
+  SetupResponse,
+  StatusResponse,
+  UserMeResponse,
+  SendOtpResponse,
+  VerifyOtpRequest,
+  VerifyOtpResponse,
+  ResetPasswordWithOtpRequest,
+  GoogleAuthRequest,
+} from '../types/api';
 
 export interface AuthContextType {
   isUnlocked: boolean;
@@ -20,11 +30,15 @@ export interface AuthContextType {
   checkStatus: () => Promise<void>;
   unlock: (password: string, username?: string, bookId?: string) => Promise<boolean>;
   setup: (password: string, username?: string, notebookTitle?: string, coverColor?: CoverTheme) => Promise<boolean>;
+  sendOtp: (email: string, purpose?: string, username?: string) => Promise<SendOtpResponse>;
+  verifyOtp: (body: VerifyOtpRequest) => Promise<VerifyOtpResponse>;
+  loginWithGoogle: (body: GoogleAuthRequest) => Promise<boolean>;
+  resetPasswordWithOtp: (body: ResetPasswordWithOtpRequest) => Promise<OkResponse>;
   lock: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<OkResponse>;
   getMe: () => Promise<UserMeResponse>;
   refreshLibrary: () => Promise<BookshelfEntry[]>;
-  handleSessionLocked: () => void;
+  handleSessionLocked: (msg?: string) => void;
   startLockoutCountdown: (seconds: number) => void;
   clearError: () => void;
 }
@@ -223,6 +237,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [clearLockoutTimer]
   );
 
+  const sendOtp = useCallback(
+    async (email: string, purpose = 'login', username?: string): Promise<SendOtpResponse> => {
+      setError(null);
+      try {
+        const res = await api.sendOtp({ email, purpose, username });
+        return res;
+      } catch (err: any) {
+        setError(err.message || 'Failed to dispatch verification code.');
+        throw err;
+      }
+    },
+    []
+  );
+
+  const verifyOtp = useCallback(
+    async (body: VerifyOtpRequest): Promise<VerifyOtpResponse> => {
+      setError(null);
+      try {
+        const res = await api.verifyOtp(body);
+        if (res && res.ok && res.user && res.vault) {
+          setIsUnlocked(true);
+          setCurrentUser(res.user);
+          setIsAdmin(Boolean((res as any).isAdmin ?? (res.user.toLowerCase() === 'admin')));
+          setAuthPayload({
+            ok: true,
+            user: res.user,
+            vault: res.vault,
+            activeBookId: res.activeBookId || res.vault.activeBookId,
+            notebook: res.notebook || (res.vault.books && res.vault.books[0]),
+          });
+          setSetupNeeded(false);
+          setLockedOut(false);
+          setRemainingSeconds(0);
+          clearLockoutTimer();
+          refreshLibrary().catch(() => {});
+        }
+        return res;
+      } catch (err: any) {
+        if (err.status === 429 || err.lockedOut) {
+          const secs = err.remainingSeconds || 1800;
+          startLockoutCountdown(secs);
+          setError(err.message || 'Security Lockout Active. Please wait before retrying.');
+        } else {
+          setError(err.message || 'Verification code failed.');
+        }
+        throw err;
+      }
+    },
+    [clearLockoutTimer, refreshLibrary, startLockoutCountdown]
+  );
+
+  const loginWithGoogle = useCallback(
+    async (body: GoogleAuthRequest): Promise<boolean> => {
+      setError(null);
+      try {
+        const res = await api.googleAuth(body);
+        if (res && res.ok && res.user) {
+          setIsUnlocked(true);
+          setCurrentUser(res.user);
+          setIsAdmin(Boolean((res as any).isAdmin ?? (res.user.toLowerCase() === 'admin')));
+          setAuthPayload(res);
+          setSetupNeeded(false);
+          setLockedOut(false);
+          setRemainingSeconds(0);
+          clearLockoutTimer();
+          refreshLibrary().catch(() => {});
+          return true;
+        }
+        return false;
+      } catch (err: any) {
+        setError(err.message || 'Google authentication failed.');
+        throw err;
+      }
+    },
+    [clearLockoutTimer, refreshLibrary]
+  );
+
+  const resetPasswordWithOtp = useCallback(
+    async (body: ResetPasswordWithOtpRequest): Promise<OkResponse> => {
+      setError(null);
+      try {
+        const res = await api.resetPasswordWithOtp(body);
+        if ((res as any).vault && (res as any).user) {
+          setIsUnlocked(true);
+          setCurrentUser((res as any).user);
+          setIsAdmin(Boolean((res as any).user.toLowerCase() === 'admin'));
+          setAuthPayload(res as any);
+          setSetupNeeded(false);
+          setLockedOut(false);
+          setRemainingSeconds(0);
+          clearLockoutTimer();
+          refreshLibrary().catch(() => {});
+        }
+        return res;
+      } catch (err: any) {
+        setError(err.message || 'Failed to reset password.');
+        throw err;
+      }
+    },
+    [clearLockoutTimer, refreshLibrary]
+  );
+
   const lock = useCallback(async (): Promise<void> => {
     try {
       await api.lock();
@@ -321,6 +437,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkStatus,
     unlock,
     setup,
+    sendOtp,
+    verifyOtp,
+    loginWithGoogle,
+    resetPasswordWithOtp,
     lock,
     changePassword,
     getMe,

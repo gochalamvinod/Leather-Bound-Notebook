@@ -590,6 +590,21 @@ function migrate(options = {}) {
   dbInstance.exec(SCHEMA_DDL);
   ensureMigrationTable(dbInstance);
 
+  // Safe idempotent column migration for existing user databases
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN first_name TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN last_name TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN preferred_name TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN tier TEXT DEFAULT 'classic';`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN encrypted_profile TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN admin_envelope TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN active_session_id TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN email TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN google_id TEXT;`); } catch (e) {}
+  try { dbInstance.exec(`ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local';`); } catch (e) {}
+
   // 2. Derive admin key for decrypting audit logs & admin vault
   let adminKey = null;
   const adminFile = path.join(dataDir, 'users', 'admin.enc.json');

@@ -1,4 +1,4 @@
-import {
+import type {
   AdminBooksListResponse,
   AdminCheckUserPasswordResponse,
   AdminClearLogsResponse,
@@ -51,6 +51,12 @@ import {
   AdminIncreaseDimensionQuotaRequest,
   UserMeResponse,
   YouTubeSearchResponse,
+  SendOtpRequest,
+  SendOtpResponse,
+  VerifyOtpRequest,
+  VerifyOtpResponse,
+  ResetPasswordWithOtpRequest,
+  GoogleAuthRequest,
 } from '../../types/api';
 
 /**
@@ -123,6 +129,40 @@ export const api = {
   /** Unlock existing vault or user notebook with password */
   unlock: (body: UnlockRequest) =>
     request<UnlockResponse>('/api/unlock', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Dispatch cryptographic 6-digit OTP code to email */
+  sendOtp: (body: SendOtpRequest) =>
+    request<SendOtpResponse>('/api/auth/send-otp', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Verify cryptographic OTP code for login/registration/recovery */
+  verifyOtp: (body: VerifyOtpRequest) =>
+    request<VerifyOtpResponse>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Get OTP cooldown and expiration status */
+  getOtpStatus: (email: string, purpose = 'login') =>
+    request<{ ok: boolean; hasActiveOtp: boolean; cooldownRemaining: number; expirationRemaining: number; remainingAttempts: number; isLocked: boolean }>(
+      `/api/auth/otp-status?email=${encodeURIComponent(email)}&purpose=${encodeURIComponent(purpose)}`
+    ),
+
+  /** Reset account password with verified OTP */
+  resetPasswordWithOtp: (body: ResetPasswordWithOtpRequest) =>
+    request<OkResponse>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Authenticate with Google / Gmail OAuth credential */
+  googleAuth: (body: GoogleAuthRequest) =>
+    request<SetupResponse & { email?: string; isNewUser?: boolean }>('/api/auth/google', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

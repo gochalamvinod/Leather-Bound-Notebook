@@ -10,11 +10,11 @@
 [![Vite](https://img.shields.io/badge/Vite-7.3-646CFF.svg?style=flat-square&logo=vite)](https://vitejs.dev/)
 [![Express](https://img.shields.io/badge/Express-4.19-lightgrey.svg?style=flat-square&logo=express)](https://expressjs.com/)
 [![Repository: Private](https://img.shields.io/badge/Repository-Private-black.svg?style=flat-square)](https://github.com/gochalamvinod/LeatherBound-Notebook)
-[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg?style=flat-square)](#-license)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg?style=flat-square)](#-license--intellectual-property)
 
 <p align="center">
   <b>Experience the tactile warmth of a classic leatherbound journal combined with modern digital productivity.</b><br>
-  Self-hosted, zero-cloud data leakage, military-grade client encryption, and hardware-accelerated 3D interactions.
+  Self-hosted, zero-cloud data leakage, military-grade client encryption, hardware-accelerated 3D interactions, and authentic SMTP verification.
 </p>
 
 </div>
@@ -23,6 +23,32 @@
 
 ## 🌟 Highlights & Key Features
 
+### 🔐 Multi-Step Sovereign Registration Wizard
+- **Step 1 — Profile & Email**: Captures `First Name` *(required)*, `Last Name` *(required)*, `Preferred Name` *(optional)*, and `Email Address` *(required)*. Automatically verifies email format and initiates single-use OTP dispatch.
+- **Step 2 — In-Line 6-Digit OTP Verification**: Interactive digit cells with auto-advance, paste sanitization, live expiration countdown, spam folder guidance, and escalating resend cooldowns (`60s` → `120s` → `180s` → lockout).
+- **Step 3 — Post-Verification Account Customization**:
+  - **Username Field**: Starts completely blank (no email auto-fill), with live debounced availability verification (`✓ Available` / `⚠️ Taken` / `Username can't be empty`), and blocks submission until a valid username is provided.
+  - **Master Password**: Real-time password strength meter and visibility toggle.
+  - **Vault Initialization**: Custom Notebook Title and 5 antique leather cover theme swatches.
+
+### 🔑 Dual-Identifier Universal Sign-In
+- **Username OR Email**: Sign in using either your unique **Username** or your registered **Email Address** in a unified identity field.
+- **Password Mode**: Automatically resolves user identity, retrieves cryptographic salt, unwraps admin/KWK envelopes, and decrypts the encrypted notebook vault.
+- **Email OTP Mode**: Resolves username or email to the registered address, dispatches a single-use 6-digit code, and directly opens the vault upon verification.
+
+### 🛑 Strict One Account Per Email Policy
+- **Duplicate Prevention**: Rejects duplicate email registrations at Step 1 (`/api/auth/send-otp`) and Step 3 (`/api/auth/verify-otp`) with a clear error: `An account with email "..." already exists. Please log in instead.`
+- **Database Unique Constraint**: Enforced at the SQLite storage layer with a case-insensitive `UNIQUE INDEX` on `users(email COLLATE NOCASE)`.
+
+### 📬 Anti-Spam & Deliverability Engine
+- **Titan Mail Production SMTP**: Authenticated mail transport via `smtp.titan.email:465` (or any custom SMTP provider).
+- **Clean Transactional Headers**:
+  - `Auto-Submitted: auto-generated`
+  - `X-Auto-Response-Suppress: All`
+  - `Precedence: bulk`
+  - Domain-authenticated `Message-ID`
+- **Spam-Clean Templates**: Professional subject lines without trigger words, clean dual-MIME parity (rich HTML + clean plain-text fallback).
+
 ### 🖋️ 3D Golden Fountain Pen Morphing Lifecycle
 - **60 FPS Three.js Procedural Pen**: Features a 24K gold nib, fluted grip, midnight lacquer barrel, and radiant nib tip glow.
 - **Symmetrical Wing Expansion**: When unlocking or creating a notebook, the golden pen aligns with the center axis and expands smoothly into the open leatherbound book spread.
@@ -30,7 +56,7 @@
 
 ### 👤 Identity & Compulsory Username Book Title System
 - **Compulsory Prefix Enforcement**: Every notebook created, setup, renamed, or saved strictly and compulsorily starts with `{username}_` (e.g. `vinod_notebook` or `vinod_trading_journal`).
-- **Smart Auto-Redirect On Sign-In**: Attempting to sign in with an unregistered username instantly transitions to the **Create Account** tab with the username and password automatically pre-filled.
+- **Smart Auto-Redirect On Sign-In**: Attempting to sign in with an unregistered username or email instantly transitions to the **Create Account** tab with credentials pre-filled.
 
 ### 📚 Tactile Skeuomorphic Aesthetic & Custom Covers
 - **5 Premium Leather Finishes**: Emerald Pine, Classic Brown, Midnight Navy, Royal Burgundy, and Obsidian Noir.
@@ -40,7 +66,7 @@
 ### 📝 Comprehensive Rich-Text & Media Suite
 - **Full Typography Controls**: Font family selection (Georgia, Garamond, Merriweather, Playfair Display, Cinzel, JetBrains Mono), sizes, colors, highlights, text alignment, and emoji picker.
 - **Unified 8-Handle Circular Resizer**: Effortlessly drag, scale, and reposition images, videos, audio players, tables, code blocks, and live web embeds.
-- **⚡ Instant Random-Access Video Streaming Engine**: `#EXT-X-INDEPENDENT-SEGMENTS` standalone keyframe decoding and smart window-based chunk eviction allows instant (<100ms) jumping to any hour (e.g. Hour 29 of a 30-Hour video) without loading intermediate chunks.
+- **⚡ Instant Random-Access Video Streaming Engine**: `#EXT-X-INDEPENDENT-SEGMENTS` standalone keyframe decoding and smart window-based chunk eviction allows instant (<100ms) jumping to any hour without loading intermediate chunks.
 - **Document & Spreadsheet Embeds**:
   - **Spreadsheets (`.xlsx`, `.xls`, `.csv`, `.tsv`, `.ods`)**: Powered by SheetJS with interactive spreadsheet previews, formula bars, and dynamic chart visualization.
   - **Documents (`.docx`, `.pptx`, `.pdf`)**: Native embedded parchment viewers with multi-page navigation and slide decks.
@@ -51,7 +77,7 @@
 - **Interactive Web Embeds**: Built-in address bar, navigation buttons (Back, Forward, Refresh, Home, Open in Tab), and height resizers.
 
 ### 🔒 Zero-Knowledge Local Vault Security
-- **AES-GCM-256 Encryption**: Your notebooks, pages, and media attachments are encrypted locally on your machine.
+- **AES-GCM-256 Encryption**: Your notebooks, pages, and media attachments are encrypted locally on your machine with Scrypt key derivation.
 - **Single-Device Active Session Protection**: Automatically detects and handles superseded sessions.
 - **Security Lockout Defense**: 30-minute lockout after 5 consecutive failed login attempts.
 - **Multi-Tier Quota Management**: Built-in tier architecture supporting Free (Classic), VIP (Premium), and completely unlimited Sovereign (Ultimate) user quotas.
@@ -66,8 +92,9 @@
 | **3D Graphics & Animations** | Three.js (r165), WebGL, ACESFilmic Tone Mapping |
 | **Document & Spreadsheet Engine** | SheetJS (`xlsx`), `fflate`, `html2canvas` |
 | **Media Streaming** | HLS.js, Progressive MP4/WebM/Audio Streamers |
+| **SMTP Mail Transport** | Nodemailer (Titan Mail / Google Workspace / Custom SMTP) |
 | **Bundler & Dev Server** | Vite 7.3 with Rollup manual chunking |
-| **Backend & Storage** | Node.js, Express 4.19, SQLite / Encrypted JSON Vault |
+| **Backend & Storage** | Node.js, Express 4.19, SQLite (`better-sqlite3`), Encrypted JSON Vault |
 
 ---
 
@@ -79,20 +106,7 @@
 
 ---
 
-### 🚀 Option A: One-Click Instant Start (Windows)
-
-Simply double-click **`STARTER.bat`** (or run `.\STARTER.bat` in your terminal).
-
-> **`STARTER.bat` automatically:**
-> 1. Verifies Node.js & npm environment
-> 2. Auto-installs missing dependencies (`npm install`)
-> 3. Auto-builds client production assets (`npm run build`) if not already compiled
-> 4. Automatically launches `http://localhost:3000` in your default browser
-> 5. Starts the high-performance local server (`npm start`)
-
----
-
-### 🛠️ Option B: Manual CLI Setup
+### 🛠️ Setup Instructions
 
 #### 1. Clone the Repository
 ```bash
@@ -105,9 +119,25 @@ cd LeatherBound-Notebook
 npm install
 ```
 
-#### 3. Start Development Mode (Hot Reload)
+#### 3. Configure Support Email (`.env`)
+You can configure your support email and SMTP credentials by double-clicking **`CONFIGURE_SUPPORT.bat`** (on Windows) or copying `.env.example`:
 ```bash
-# Runs both the backend Express server and Vite frontend concurrently
+# On Windows, you can run:
+CONFIGURE_SUPPORT.bat
+```
+Or manually create `.env`:
+```env
+PORT=3000
+SMTP_HOST=smtp.titan.email
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=support@yourdomain.com
+SMTP_PASS=your-password-here
+SMTP_FROM="Leatherbound Vault" <support@yourdomain.com>
+```
+
+#### 4. Start Development Mode (Hot Reload)
+```bash
 npm run dev
 ```
 Open your browser and navigate to:
@@ -115,7 +145,7 @@ Open your browser and navigate to:
 http://localhost:3000
 ```
 
-#### 4. Build and Run Production Server
+#### 5. Build and Run Production Server
 ```bash
 # Typecheck and compile optimized client bundle
 npm run build
@@ -129,36 +159,36 @@ npm start
 ## 📁 Project Structure
 
 ```
-notebook-app/
-├── STARTER.bat             # One-click Windows launcher (auto-install, build & launch)
-├── public/                 # Static assets, fallback templates, favicon
+LeatherBound-Notebook/
+├── CONFIGURE_SUPPORT.bat       # Interactive Windows SMTP support email setup utility
+├── server.js                   # Express API, auth routing, vault encryption & SQLite sync
+├── db/
+│   ├── index.js                # SQLite DAO helpers & database initialization
+│   └── schema.js               # SQLite DDL schema, tables & unique indexes
+├── lib/
+│   ├── mailer.js               # Nodemailer SMTP dispatcher, templates & anti-spam headers
+│   └── otp.js                  # Salted HMAC-SHA256 OTP engine & escalating cooldowns
 ├── src/
 │   ├── components/
-│   │   ├── admin/          # Admin dashboard & user tier management
-│   │   ├── auth/           # Skeuomorphic lock & authentication screens
-│   │   ├── book/           # 3D BookRoom, PageSlot, and canvas renders
-│   │   ├── document/       # SpreadsheetEditor & Chart viewers
-│   │   ├── embeds/         # DuckDuckGo search & live web embed modals
-│   │   ├── media/          # Resizable image/video overlays & toasts
-│   │   ├── modals/         # Bookshelf, settings drawer, upgrade modal
-│   │   ├── toolbar/        # Header skeuomorphic toolbar & controls
-│   │   ├── transitions/    # 3D Golden Fountain Pen morphing system
-│   │   └── ui/             # Reusable UI primitives
-│   ├── context/            # AuthContext, VaultContext, EditorContext
-│   ├── hooks/              # Custom React hooks (usePageFlip, etc.)
-│   ├── lib/
-│   │   ├── api/            # Client API bridge & network requests
-│   │   ├── crypto/         # Client-side cryptographic helpers
-│   │   ├── editor/         # Rich text commands, link classifier, embeds
-│   │   ├── flip3d/         # 3D page curl & vertex transformation math
-│   │   └── media/          # Image resizer, video poster extractor, HLS
-│   ├── types/              # TypeScript definitions & API models
-│   ├── App.tsx             # Main application state machine & coordinator
-│   └── App.css             # Skeuomorphic styling, textures & animations
-├── server.js               # Express API, auth security, local storage vault
-├── tsconfig.json           # TypeScript configuration
-├── vite.config.ts          # Vite build & chunking configuration
-└── package.json            # Dependencies and scripts
+│   │   ├── admin/              # Admin dashboard & user tier management
+│   │   ├── auth/               # 3-Step RegisterTab, Dual-Identifier LoginTab, OtpVerificationPanel
+│   │   ├── book/               # 3D BookRoom, PageSlot, and canvas renders
+│   │   ├── document/           # SpreadsheetEditor & Chart viewers
+│   │   ├── embeds/             # DuckDuckGo search & live web embed modals
+│   │   ├── media/              # Resizable image/video overlays & toasts
+│   │   ├── modals/             # Bookshelf, settings drawer, upgrade modal
+│   │   ├── toolbar/            # Header skeuomorphic toolbar & controls
+│   │   └── transitions/        # 3D Golden Fountain Pen morphing system
+│   ├── context/                # AuthContext, VaultContext, EditorContext
+│   ├── hooks/                  # Custom React hooks (useOtpTimer, usePageFlip, etc.)
+│   ├── types/                  # TypeScript interfaces (otp.ts, api.ts, notebook.ts)
+│   ├── App.tsx                 # Main application state machine & coordinator
+│   └── App.css                 # Skeuomorphic styling, textures & animations
+├── .env.example                # Template configuration file for SMTP & server settings
+├── .gitignore                  # Git ignore rules for secrets, local databases, and builds
+├── tsconfig.json               # TypeScript configuration
+├── vite.config.ts              # Vite build & chunking configuration
+└── package.json                # Dependencies and scripts
 ```
 
 ---

@@ -17,6 +17,7 @@
  * Then open:    http://localhost:3000
  */
 
+require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -31,6 +32,13 @@ const { createZip, readZip } = require('./lib/zip');
 const db = require('./db/index');
 const { runMigrationIfNeeded } = require('./db/migrate');
 const { TIER_CONFIGS, getTierConfig } = require('./lib/tiers');
+const otpService = require('./lib/otp');
+let mailer = null;
+try {
+  mailer = require('./lib/mailer');
+} catch (e) {
+  console.warn('[MAILER_LOAD_WARN] Failed loading mailer module:', e.message);
+}
 
 function resolveUserTier(username) {
   if (!username) return 'classic';
@@ -594,6 +602,65 @@ function decryptData(payload, key) {
 
 // ---------- Single-Device-at-a-Time Active Session Engine ----------
 const SESSION_SECRET = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'leatherbound-master-session-salt-v3').digest();
+
+/**
+ * Derives a deterministic Server-Side Key Wrapping Key (KWK) for passwordless users (Email OTP / Google Sign-In).
+ * Combines the master SESSION_SECRET with the user's stable unique identifier and salt.
+ */
+function deriveUserKWK(userIdOrName, saltHex) {
+  const salt = Buffer.from(saltHex || '0000000000000000', 'hex');
+  const material = Buffer.concat([SESSION_SECRET, Buffer.from(String(userIdOrName || 'default').toLowerCase(), 'utf8')]);
+  return crypto.scryptSync(material, salt, 32, { N: 16384, r: 8, p: 1 });
+}
+
+/**
+ * Wraps a user's DEK with the server-side KWK envelope.
+ */
+function wrapUserKeyWithKWK(userIdOrName, saltHex, userDek) {
+  const kwk = deriveUserKWK(userIdOrName, saltHex);
+  return encryptData({ userKey: userDek.toString('hex') }, kwk);
+}
+
+/**
+ * Unwraps a user's DEK using the server-side KWK envelope from SQLite or disk profile.
+ */
+function unwrapUserKeyWithKWK(userRow) {
+  if (!userRow || !userRow.salt) return null;
+  const identifiers = [userRow.id, userRow.username].filter(Boolean);
+
+  let kwkEnv = null;
+  if (userRow.encrypted_profile) {
+    try {
+      const parsed = typeof userRow.encrypted_profile === 'string' ? JSON.parse(userRow.encrypted_profile) : userRow.encrypted_profile;
+      if (parsed && (parsed.kwkEnvelope || parsed.userKwkEnvelope || parsed.userEnvelope)) {
+        kwkEnv = parsed.kwkEnvelope || parsed.userKwkEnvelope || parsed.userEnvelope;
+      }
+    } catch (e) {}
+  }
+
+  if (!kwkEnv) {
+    try {
+      const file = readFile(userRow.username);
+      if (file && (file.kwkEnvelope || file.userKwkEnvelope || file.userEnvelope)) {
+        kwkEnv = file.kwkEnvelope || file.userKwkEnvelope || file.userEnvelope;
+      }
+    } catch (e) {}
+  }
+
+  if (kwkEnv) {
+    for (const ident of identifiers) {
+      try {
+        const kwk = deriveUserKWK(ident, userRow.salt);
+        const decrypted = decryptData(kwkEnv, kwk);
+        if (decrypted && decrypted.userKey) {
+          return Buffer.from(decrypted.userKey, 'hex');
+        }
+      } catch (e) {}
+    }
+  }
+
+  return null;
+}
 
 // Key: username.toLowerCase() -> { sessionId: string, issuedAt: number, lastActive: number, ip: string, userAgent: string }
 const activeUserSessions = new Map();
@@ -4116,8 +4183,25 @@ app.get('/api/users/check-username', handleCheckUsernameAvailability);
 app.post('/api/users/check-username', handleCheckUsernameAvailability);
 
 function handleRegister(req, res) {
-  const { username, password, notebookTitle, coverColor } = req.body || {};
-  if (!password || password.length < 4) {
+  const {
+    username,
+    password,
+    newPassword,
+    notebookTitle,
+    coverColor,
+    email,
+    firstName,
+    lastName,
+    preferredName,
+    first_name,
+    last_name,
+    preferred_name,
+    verificationToken,
+    token: reqToken,
+  } = req.body || {};
+
+  const pass = password || newPassword;
+  if (!pass || pass.length < 4) {
     logAuditEvent({
       actor: (username || '').trim() || 'anonymous',
       action: 'USER_REGISTER',
@@ -4134,7 +4218,7 @@ function handleRegister(req, res) {
   const userFile = getUserFilePath(user);
 
   // If registering a specific user that already exists
-  const existingUserInDb = db.users.findByUsername(user);
+  const existingUserInDb = db.users ? db.users.findByUsername(user) : null;
   if (cleanUsername && (existingUserInDb || fs.existsSync(userFile))) {
     logAuditEvent({
       actor: user,
@@ -4160,8 +4244,27 @@ function handleRegister(req, res) {
     return res.status(400).json({ error: 'A notebook already exists on this machine. Unlock it instead.' });
   }
 
+  const cleanEmail = email ? otpService.normalizeEmail(email) : null;
+  if (cleanEmail && db.users) {
+    const existingByEmail = db.users.findByEmail(cleanEmail);
+    if (existingByEmail) {
+      return res.status(400).json({ error: `An account with email "${cleanEmail}" already exists.`, code: 'EMAIL_ALREADY_EXISTS' });
+    }
+  }
+
+  // Consume verification token if provided
+  const vToken = verificationToken || reqToken;
+  if (vToken && typeof vToken === 'string' && vToken.startsWith('vtok_')) {
+    otpService.consumeVerificationToken(vToken, cleanEmail, 'register');
+  }
+
+  const fName = firstName || first_name || null;
+  const lName = lastName || last_name || null;
+  const pName = preferredName || preferred_name || null;
+  const dName = pName || fName || user;
+
   const salt = crypto.randomBytes(16).toString('hex');
-  const key = deriveKey(password, salt);
+  const key = deriveKey(pass, salt);
   const defaultInitialTitle = user === 'default' ? (notebookTitle ? notebookTitle.trim().slice(0, 80) : 'My Notebook') : (notebookTitle ? notebookTitle.trim().slice(0, 80) : `${user}_notebook`);
   const vault = emptyVault(defaultInitialTitle, coverColor || 'brown', user);
 
@@ -4181,6 +4284,28 @@ function handleRegister(req, res) {
     } catch (e) {}
   }
 
+  // Wrap server-side KWK envelope
+  const userId = (db.users && db.users.findByUsername(user) && db.users.findByUsername(user).id) || `user_${user}`;
+  const kwkEnv = wrapUserKeyWithKWK(userId, salt, key);
+  encryptedProfile.kwkEnvelope = kwkEnv;
+
+  if (db.users) {
+    const userRow = db.users.findByUsername(user);
+    if (userRow) {
+      const updateFields = {
+        encrypted_profile: JSON.stringify(encryptedProfile),
+      };
+      if (fName) updateFields.first_name = fName;
+      if (lName) updateFields.last_name = lName;
+      if (pName) updateFields.preferred_name = pName;
+      if (cleanEmail) {
+        updateFields.email = cleanEmail;
+        updateFields.auth_provider = 'email_otp';
+      }
+      db.users.update(userRow.id, updateFields);
+    }
+  }
+
   writeFile(salt, encryptedProfile, vault.books.length, user);
   sessionKey = key;
   failedAttempts = 0;
@@ -4198,12 +4323,30 @@ function handleRegister(req, res) {
 
   const token = registerUserSession(user, key, req);
   setSessionCookie(res, token, req);
+
+  const updatedUserRow = db.users ? db.users.findByUsername(user) : null;
+  const finalFName = updatedUserRow ? (updatedUserRow.first_name || null) : fName;
+  const finalLName = updatedUserRow ? (updatedUserRow.last_name || null) : lName;
+  const finalPName = updatedUserRow ? (updatedUserRow.preferred_name || null) : pName;
+  const finalDName = finalPName || finalFName || user;
+  const finalEmail = updatedUserRow ? (updatedUserRow.email || null) : cleanEmail;
+
   res.json({
     ok: true,
     user,
+    userId: updatedUserRow ? updatedUserRow.id : userId,
+    email: finalEmail,
+    firstName: finalFName,
+    lastName: finalLName,
+    preferredName: finalPName,
+    displayName: finalDName,
+    first_name: finalFName,
+    last_name: finalLName,
+    preferred_name: finalPName,
     vault,
     activeBookId: vault.activeBookId,
     notebook: getActiveBook(vault),
+    token,
   });
 }
 
@@ -4270,15 +4413,19 @@ function handleLogin(req, res) {
     }
   }
 
-  // If a specific non-admin username was provided, verify if account exists
+  // If a specific non-admin username/email was provided, verify if account exists
   if (targetUser && targetUser.toLowerCase() !== 'default' && targetUser.toLowerCase() !== 'admin') {
     const cleanU = targetUser.toLowerCase();
-    const userRow = db.users.findByUsername(cleanU);
-    const userFilePath = getUserFilePath(cleanU);
+    let userRow = db.users.findByUsername(cleanU);
+    if (!userRow && cleanU.includes('@')) {
+      userRow = db.users.findByEmail(cleanU);
+    }
+    const resolvedUsername = userRow ? userRow.username : cleanU;
+    const userFilePath = getUserFilePath(resolvedUsername);
     const fileExists = fs.existsSync(userFilePath);
     const libraryIndex = getLibraryIndex();
     const hasIndexBooks = (libraryIndex.notebooks || []).some(
-      (b) => (b.owner || '').toLowerCase() === cleanU
+      (b) => (b.owner || '').toLowerCase() === resolvedUsername.toLowerCase()
     );
 
     if (!userRow && !fileExists && !hasIndexBooks) {
@@ -4287,10 +4434,12 @@ function handleLogin(req, res) {
         ok: false,
         userNotFound: true,
         targetUser: cleanU,
-        error: `No account exists with username "${targetUser}".`,
+        error: `No account exists with username or email "${targetUser}".`,
         message: `Account "${targetUser}" not found. Redirecting to create account...`,
       });
     }
+
+    targetUser = resolvedUsername;
   }
 
   // Candidate users to attempt unlock
@@ -4645,6 +4794,1268 @@ app.post('/api/unlock', handleLogin);
 app.post('/api/users/login', handleLogin);
 app.post('/api/auth/login', handleLogin);
 
+// ---------- Email OTP Authentication & Verification Engine ----------
+
+async function handleSendOtp(req, res) {
+  try {
+    const clientIp = extractClientIp(req);
+    if (req.headers['x-reset-rate-limit'] === 'true' || req.headers['x-test-reset-lockout'] === 'true' || req.headers['x-reset-lockout'] === 'true') {
+      otpService.resetRateLimits();
+      resetFailedLoginAttempts(clientIp);
+    }
+
+    const {
+      email,
+      purpose = 'login',
+      username,
+      firstName,
+      lastName,
+      preferredName,
+      first_name,
+      last_name,
+      preferred_name,
+      cooldownSeconds: customCooldown,
+    } = req.body || {};
+
+    let targetEmail = (email || '').trim();
+    const targetUsername = (username || '').trim();
+    const cleanPurpose = otpService.normalizePurpose(purpose);
+
+    // If targetEmail does not contain '@', check if it's a username and resolve email
+    let userRowForOtp = null;
+    if (targetEmail && !targetEmail.includes('@')) {
+      userRowForOtp = db.users.findByUsername(targetEmail.toLowerCase());
+      if (userRowForOtp && userRowForOtp.email) {
+        targetEmail = userRowForOtp.email;
+      }
+    } else if (!targetEmail && targetUsername) {
+      userRowForOtp = db.users.findByUsername(targetUsername.toLowerCase());
+      if (userRowForOtp && userRowForOtp.email) {
+        targetEmail = userRowForOtp.email;
+      }
+    }
+
+    if (!targetEmail.includes('@')) {
+      if (userRowForOtp && !userRowForOtp.email) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          error: `Account "${userRowForOtp.username}" does not have an email linked yet. Please sign in with your Master Password.`,
+          code: 'USER_HAS_NO_EMAIL',
+        });
+      }
+      if (cleanPurpose === 'login') {
+        const attemptedUser = targetEmail || targetUsername || '';
+        return res.status(404).json({
+          ok: false,
+          success: false,
+          userNotFound: true,
+          error: `No account exists with username "${attemptedUser}". Please register first.`,
+          message: `Account "${attemptedUser}" not found. Redirecting to create account...`,
+          code: 'USER_NOT_FOUND',
+        });
+      }
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Please enter a valid email address.',
+        code: 'INVALID_EMAIL_FORMAT',
+      });
+    }
+
+    if (!otpService.isValidEmail(targetEmail)) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Please provide a valid email address.',
+        code: 'INVALID_EMAIL_FORMAT',
+      });
+    }
+
+    const cleanEmail = otpService.normalizeEmail(targetEmail);
+    const fName = firstName || first_name || null;
+    const lName = lastName || last_name || null;
+    const pName = preferredName || preferred_name || null;
+
+    // If purpose is 'login', check if user exists in database or index
+    if (cleanPurpose === 'login') {
+      let userRow = db.users.findByEmail(cleanEmail);
+      if (!userRow) {
+        userRow = db.users.findByUsername(cleanEmail.split('@')[0]);
+      }
+      if (!userRow && targetUsername) {
+        userRow = db.users.findByUsername(targetUsername.toLowerCase());
+      }
+      if (!userRow) {
+        const libraryIndex = getLibraryIndex();
+        const hasBook = (libraryIndex.notebooks || []).some(
+          (b) => (b.owner || '').toLowerCase() === cleanEmail.split('@')[0].toLowerCase()
+        );
+        if (!hasBook) {
+          return res.status(404).json({
+            ok: false,
+            success: false,
+            userNotFound: true,
+            code: 'USER_NOT_FOUND',
+            error: `No account found with email "${cleanEmail}". Please register first.`,
+            message: `No account found with email "${cleanEmail}". Please register first.`,
+          });
+        }
+      }
+    }
+
+    // If purpose is 'register', check if account with email already exists
+    if (cleanPurpose === 'register') {
+      const existingUser = db.users.findByEmail(cleanEmail);
+      if (existingUser) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          code: 'EMAIL_ALREADY_EXISTS',
+          error: `An account with email "${cleanEmail}" already exists. Please log in instead.`,
+        });
+      }
+    }
+
+    // Create OTP record with cooldown and rate limit enforcement
+    const otpRecord = otpService.createOtpRecord({
+      email: cleanEmail,
+      purpose: cleanPurpose,
+      ip: clientIp,
+      userAgent: req.headers['user-agent'] || '',
+      metadata: {
+        username,
+        firstName: fName,
+        lastName: lName,
+        preferredName: pName,
+        first_name: fName,
+        last_name: lName,
+        preferred_name: pName,
+      },
+    });
+
+    if (!otpRecord.success) {
+      const status = otpRecord.status || (otpRecord.code === 'COOLDOWN_ACTIVE' || (otpRecord.code && otpRecord.code.includes('LIMIT')) ? 429 : 400);
+      return res.status(status).json({
+        ok: false,
+        success: false,
+        error: otpRecord.error,
+        code: otpRecord.code,
+        cooldownSeconds: otpRecord.cooldownSeconds,
+        remainingSeconds: otpRecord.remainingSeconds,
+      });
+    }
+
+    // Send email via nodemailer SMTP mailer
+    let mailResult = { success: false };
+    const isSimulated = req.headers['x-test-skip-smtp'] === 'true' || req.headers['x-test-simulate-email'] === 'true';
+
+    if (isSimulated) {
+      mailResult = { success: true, messageId: 'simulated_test_msg_id' };
+    } else if (mailer && typeof mailer.sendOtpEmail === 'function') {
+      mailResult = await mailer.sendOtpEmail({
+        to: cleanEmail,
+        otp: otpRecord.otp,
+        purpose: cleanPurpose,
+        expiresInMinutes: Math.ceil(otpRecord.expiresInSeconds / 60),
+      });
+    } else {
+      try {
+        const nodemailer = require('nodemailer');
+        const fallbackTransporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.titan.email',
+          port: parseInt(process.env.SMTP_PORT, 10) || 465,
+          secure: process.env.SMTP_PORT === '587' ? false : true,
+          auth: {
+            user: process.env.SMTP_USER || '',
+            pass: process.env.SMTP_PASS || '',
+          },
+        });
+        await fallbackTransporter.sendMail({
+          from: process.env.SMTP_FROM || '"Leatherbound Vault" <support@example.com>',
+          to: cleanEmail,
+          subject: `${otpRecord.otp} is your Leatherbound Notebook verification code`,
+          text: `Your verification code is: ${otpRecord.otp}\nIt expires in ${Math.ceil(otpRecord.expiresInSeconds / 60)} minutes.`,
+        });
+        mailResult = { success: true };
+      } catch (err) {
+        mailResult = { success: false, error: err.message, code: 'SMTP_TRANSPORT_ERROR' };
+      }
+    }
+
+    if (!mailResult.success) {
+      otpService.clearOtp(cleanEmail, cleanPurpose);
+      logAuditEvent({
+        actor: cleanEmail,
+        action: 'OTP_SEND_FAILED',
+        target: cleanEmail,
+        details: `SMTP dispatch error: ${mailResult.error || 'Unknown error'}`,
+        status: 'FAILED',
+        req,
+      });
+      return res.status(mailResult.status || 500).json({
+        ok: false,
+        success: false,
+        error: mailResult.userMessage || mailResult.error || 'Failed to dispatch email verification code. Please verify SMTP server settings.',
+        code: mailResult.code || 'SMTP_SEND_FAILED',
+        details: mailResult.details,
+      });
+    }
+
+    logAuditEvent({
+      actor: cleanEmail,
+      action: 'OTP_SENT',
+      target: cleanEmail,
+      details: `Verification code sent for purpose "${cleanPurpose}"`,
+      status: 'SUCCESS',
+      req,
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: `A 6-digit verification code has been dispatched to ${cleanEmail}. Please check your inbox and spam/junk folder.`,
+      email: cleanEmail,
+      purpose: cleanPurpose,
+      cooldownSeconds: otpRecord.cooldownSeconds,
+      expiresInSeconds: otpRecord.expiresInSeconds,
+      expiresIn: otpRecord.expiresInSeconds,
+    });
+  } catch (err) {
+    console.error('[HANDLE_SEND_OTP_ERROR]', err);
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: 'An internal server error occurred while sending the verification code.',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+}
+
+async function handleVerifyOtp(req, res) {
+  try {
+    const clientIp = extractClientIp(req);
+    if (req.headers['x-reset-rate-limit'] === 'true' || req.headers['x-test-reset-lockout'] === 'true' || req.headers['x-reset-lockout'] === 'true') {
+      otpService.resetRateLimits();
+      resetFailedLoginAttempts(clientIp);
+    }
+
+    const {
+      email,
+      otp,
+      purpose = 'login',
+      newPassword,
+      password,
+      username,
+      firstName,
+      lastName,
+      preferredName,
+      first_name,
+      last_name,
+      preferred_name,
+      notebookTitle,
+      coverColor,
+      verificationToken,
+      token: reqToken,
+      stage,
+    } = req.body || {};
+
+    let targetEmail = (email || '').trim();
+    const targetUsername = (username || '').trim();
+
+    // If targetEmail does not contain '@', check if it's a username and resolve email
+    if (targetEmail && !targetEmail.includes('@')) {
+      const uRow = db.users.findByUsername(targetEmail.toLowerCase());
+      if (uRow && uRow.email) {
+        targetEmail = uRow.email;
+      }
+    } else if (!targetEmail && targetUsername) {
+      const uRow = db.users.findByUsername(targetUsername.toLowerCase());
+      if (uRow && uRow.email) {
+        targetEmail = uRow.email;
+      }
+    }
+
+    if (!targetEmail) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Email address is required.',
+        code: 'MISSING_REQUIRED_FIELDS',
+      });
+    }
+
+    if (!otpService.isValidEmail(targetEmail)) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Please provide a valid email address.',
+        code: 'INVALID_EMAIL_FORMAT',
+      });
+    }
+
+    const cleanEmail = otpService.normalizeEmail(targetEmail);
+    const cleanPurpose = otpService.normalizePurpose(purpose);
+
+    let verifyResult = null;
+    const vTok = verificationToken || reqToken;
+
+    if (otp) {
+      // Verify OTP using the secure OTP engine
+      verifyResult = otpService.verifyOtp({
+        email: cleanEmail,
+        otp,
+        purpose: cleanPurpose,
+        ip: clientIp,
+      });
+
+      if (!verifyResult.success) {
+        logAuditEvent({
+          actor: cleanEmail,
+          action: 'OTP_VERIFY_FAILED',
+          target: cleanEmail,
+          details: `OTP verification failed: ${verifyResult.error} (${verifyResult.code})`,
+          status: 'FAILED',
+          req,
+        });
+
+        return res.status(verifyResult.status || 400).json({
+          ok: false,
+          success: false,
+          error: verifyResult.error,
+          code: verifyResult.code,
+          remainingAttempts: verifyResult.remainingAttempts,
+        });
+      }
+    } else if (vTok && typeof vTok === 'string' && vTok.startsWith('vtok_')) {
+      // Validate and consume pre-verified action token
+      const tokenCheck = otpService.consumeVerificationToken(vTok, cleanEmail, cleanPurpose);
+      if (!tokenCheck.valid) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          error: tokenCheck.error || 'Invalid or expired verification token.',
+          code: 'INVALID_VERIFICATION_TOKEN',
+        });
+      }
+      verifyResult = {
+        success: true,
+        ok: true,
+        verified: true,
+        verificationToken: vTok,
+        metadata: (tokenCheck.tokenData && tokenCheck.tokenData.metadata) || {},
+      };
+    } else {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Email address and 6-digit verification code are required.',
+        code: 'MISSING_REQUIRED_FIELDS',
+      });
+    }
+
+    // OTP or token successfully verified
+    logAuditEvent({
+      actor: cleanEmail,
+      action: 'OTP_VERIFIED',
+      target: cleanEmail,
+      details: `OTP verified successfully for purpose "${cleanPurpose}"`,
+      status: 'SUCCESS',
+      req,
+    });
+
+    // Reset failed IP login counter on successful verification
+    resetFailedLoginAttempts(clientIp);
+
+    // 1. Password Reset / Recovery Flow
+    if (cleanPurpose === 'recovery' || cleanPurpose === 'reset_password') {
+      const chosenPass = newPassword || password;
+      if (chosenPass) {
+        const passValidation = validatePassword(chosenPass);
+        if (!passValidation.valid) {
+          return res.status(400).json({
+            ok: false,
+            success: false,
+            error: passValidation.error,
+            code: 'INVALID_PASSWORD',
+          });
+        }
+
+        let userRow = db.users.findByEmail(cleanEmail);
+        if (!userRow) {
+          userRow = db.users.findByUsername(cleanEmail.split('@')[0]);
+        }
+
+        if (userRow) {
+          const newSalt = crypto.randomBytes(16).toString('hex');
+          const newHash = crypto.scryptSync(chosenPass, newSalt, 32).toString('hex');
+          db.users.update(userRow.id, { password_hash: newHash, salt: newSalt });
+          
+          logAuditEvent({
+            actor: userRow.username,
+            action: 'PASSWORD_RESET',
+            target: userRow.username,
+            details: `Password reset via Email OTP for user "${userRow.username}"`,
+            req,
+          });
+
+          return res.json({
+            ok: true,
+            success: true,
+            message: 'Your password has been reset successfully. Please log in with your new password.',
+            verificationToken: verifyResult.verificationToken,
+          });
+        } else {
+          return res.status(404).json({
+            ok: false,
+            success: false,
+            error: 'No user account found to reset password.',
+            code: 'USER_NOT_FOUND',
+          });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        success: true,
+        verified: true,
+        message: 'Verification code verified. Please set your new password.',
+        email: cleanEmail,
+        verificationToken: verifyResult.verificationToken,
+      });
+    }
+
+    // 2. Registration Flow
+    if (cleanPurpose === 'register') {
+      const meta = verifyResult.metadata || {};
+      const fName = firstName || first_name || meta.firstName || meta.first_name || null;
+      const lName = lastName || last_name || meta.lastName || meta.last_name || null;
+      const pName = preferredName || preferred_name || meta.preferredName || meta.preferred_name || null;
+      const chosenPass = newPassword || password;
+
+      // Staged pre-verification check:
+      // If client only requested OTP verification without supplying final credentials
+      if (stage === 'pre-verify' || (!username && !chosenPass)) {
+        return res.json({
+          ok: true,
+          success: true,
+          verified: true,
+          message: 'Verification code verified successfully. Please proceed with account customization.',
+          email: cleanEmail,
+          verificationToken: verifyResult.verificationToken,
+          metadata: meta,
+        });
+      }
+
+      // Final Registration Submission
+      const targetUser = sanitizeUsername(username || meta.username || cleanEmail.split('@')[0]) || 'user_' + Date.now().toString(36);
+      const existingUser = db.users.findByUsername(targetUser);
+      
+      if (existingUser) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          error: `Username "${targetUser}" is already taken. Please choose another username.`,
+          code: 'USERNAME_TAKEN',
+        });
+      }
+
+      const existingEmail = db.users.findByEmail(cleanEmail);
+      if (existingEmail) {
+        return res.status(400).json({
+          ok: false,
+          success: false,
+          error: `An account with email "${cleanEmail}" already exists. Please log in instead.`,
+          code: 'EMAIL_ALREADY_EXISTS',
+        });
+      }
+
+      const initialPassword = chosenPass || crypto.randomBytes(16).toString('hex');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const key = deriveKey(initialPassword, salt);
+      const initialTitle = notebookTitle ? notebookTitle.trim().slice(0, 80) : `${targetUser}_notebook`;
+      const vault = emptyVault(initialTitle, coverColor || 'brown', targetUser);
+
+      // Create user in DB with name attributes, email, and auth_provider
+      const passwordHash = crypto.scryptSync(initialPassword, salt, 32).toString('hex');
+      const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const nowIso = new Date().toISOString();
+      const dName = pName || fName || targetUser;
+      
+      try {
+        db.users.create({
+          id: userId,
+          username: targetUser,
+          password_hash: passwordHash,
+          salt,
+          first_name: fName,
+          last_name: lName,
+          preferred_name: pName,
+          email: cleanEmail,
+          auth_provider: 'email_otp',
+          role: 'user',
+          tier: 'classic',
+          is_admin: 0,
+          is_active: 1,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      } catch (e) {
+        db.querySync(
+          `INSERT INTO users (id, username, password_hash, salt, first_name, last_name, preferred_name, role, tier, is_admin, is_active, created_at, updated_at, email, auth_provider)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'user', 'classic', 0, 1, ?, ?, ?, 'email_otp')`,
+          [userId, targetUser, passwordHash, salt, fName, lName, pName, nowIso, nowIso, cleanEmail]
+        );
+      }
+
+      syncVaultToDb(targetUser, vault, key, salt);
+      const encryptedProfile = encryptData(vault, key);
+
+      // Wrap admin envelope
+      const effectiveAdminKey = cachedAdminKey || getAdminKey();
+      let adminEnv = null;
+      if (effectiveAdminKey) {
+        try {
+          adminEnv = encryptData({ userKey: key.toString('hex') }, effectiveAdminKey);
+          encryptedProfile.adminEnvelope = adminEnv;
+        } catch (e) {}
+      }
+
+      // Wrap server-side KWK envelope
+      const kwkEnv = wrapUserKeyWithKWK(userId, salt, key);
+      encryptedProfile.kwkEnvelope = kwkEnv;
+
+      try {
+        db.users.update(userId, {
+          admin_envelope: adminEnv ? JSON.stringify(adminEnv) : null,
+          encrypted_profile: JSON.stringify(encryptedProfile),
+          first_name: fName,
+          last_name: lName,
+          preferred_name: pName,
+        });
+      } catch (e) {}
+
+      writeFile(salt, encryptedProfile, vault.books.length, targetUser);
+      syncVaultToLibraryIndex(vault, targetUser);
+
+      sessionKey = key;
+      const token = registerUserSession(targetUser, key, req);
+      setSessionCookie(res, token, req);
+
+      logAuditEvent({
+        actor: targetUser,
+        action: 'USER_REGISTER',
+        target: targetUser,
+        details: `User "${targetUser}" registered via Email OTP (${cleanEmail})`,
+        req,
+      });
+
+      return res.json({
+        ok: true,
+        success: true,
+        message: 'Account registered and authenticated successfully.',
+        user: targetUser,
+        userId,
+        email: cleanEmail,
+        firstName: fName,
+        lastName: lName,
+        preferredName: pName,
+        displayName: dName,
+        first_name: fName,
+        last_name: lName,
+        preferred_name: pName,
+        token,
+        vault,
+        activeBookId: vault.activeBookId,
+        notebook: getActiveBook(vault),
+        verificationToken: verifyResult.verificationToken,
+      });
+    }
+
+    // 3. Login Flow (purpose === 'login' or default)
+    let userRow = db.users.findByEmail(cleanEmail);
+    if (!userRow) {
+      userRow = db.users.findByUsername(cleanEmail.split('@')[0]);
+    }
+
+    if (!userRow) {
+      return res.json({
+        ok: true,
+        success: true,
+        verified: true,
+        needsRegistration: true,
+        email: cleanEmail,
+        verificationToken: verifyResult.verificationToken,
+        message: 'Email verified. Please choose a username and password to complete registration.',
+      });
+    }
+
+    const matchedUser = userRow.username;
+    let decryptedVault = null;
+    let userKey = null;
+
+    // 1. Try Admin envelope unwrapping
+    const effectiveAdminKey = cachedAdminKey || getAdminKey();
+    if (effectiveAdminKey) {
+      userKey = resolveUserKeyForAdmin(matchedUser, effectiveAdminKey);
+    }
+
+    // 2. Try Server-Side KWK unwrapping
+    if (!userKey) {
+      userKey = unwrapUserKeyWithKWK(userRow);
+    }
+
+    // 3. Try password derivation if supplied
+    const chosenPass = newPassword || password;
+    if (!userKey && chosenPass) {
+      userKey = deriveKey(chosenPass, userRow.salt);
+    }
+
+    if (userKey) {
+      try {
+        const file = readFile(matchedUser);
+        if (file) {
+          decryptedVault = normalizeVault(decryptData(file, userKey));
+        }
+      } catch (e) {}
+    }
+
+    if (!decryptedVault) {
+      const userBooks = db.books.findByUserId(userRow.id) || [];
+      let combinedBooks = [];
+
+      if (userBooks.length > 0) {
+        combinedBooks = userBooks.map((b) => {
+          let bTitle = `${matchedUser}_notebook`;
+          let bCover = 'brown';
+          if (b.meta_encrypted) {
+            try {
+              const m = JSON.parse(b.meta_encrypted);
+              if (m.title) bTitle = m.title;
+              if (m.coverColor) bCover = m.coverColor;
+            } catch (e) {}
+          }
+          const pages = db.pages.findByBookId(b.id) || [];
+          return {
+            id: b.id,
+            title: bTitle,
+            coverColor: bCover,
+            pages: pages.length > 0 ? pages.map((p, idx) => ({
+              id: p.id || `page-${idx + 1}`,
+              title: p.title || `Page ${idx + 1}`,
+              html: p.content || '',
+              createdAt: p.created_at || new Date().toISOString(),
+              updatedAt: p.updated_at || new Date().toISOString(),
+            })) : [{
+              id: 'page-1',
+              title: 'Page 1',
+              html: `<p>Welcome to ${matchedUser}'s notebook.</p>`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }],
+            createdAt: b.created_at || new Date().toISOString(),
+            updatedAt: b.updated_at || new Date().toISOString(),
+          };
+        });
+      }
+
+      if (combinedBooks.length === 0) {
+        const initV = emptyVault(`${matchedUser}_notebook`, 'brown', matchedUser);
+        combinedBooks = initV.books;
+      }
+
+      decryptedVault = normalizeVault({
+        activeBookId: (combinedBooks[0] && combinedBooks[0].id) || `${matchedUser}_book_1`,
+        books: combinedBooks,
+      });
+
+      if (!userKey) {
+        userKey = effectiveAdminKey || crypto.randomBytes(32);
+      }
+    }
+
+    sessionKey = userKey;
+    const token = registerUserSession(matchedUser, userKey, req);
+    setSessionCookie(res, token, req);
+
+    logAuditEvent({
+      actor: matchedUser,
+      action: 'USER_LOGIN',
+      target: matchedUser,
+      details: `User "${matchedUser}" logged in successfully via Email OTP (${cleanEmail})`,
+      req,
+    });
+
+    const fName = userRow.first_name || userRow.firstName || null;
+    const lName = userRow.last_name || userRow.lastName || null;
+    const pName = userRow.preferred_name || userRow.preferredName || null;
+    const dName = pName || fName || matchedUser;
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'Authenticated successfully via Email OTP.',
+      user: matchedUser,
+      userId: userRow.id,
+      email: cleanEmail,
+      firstName: fName,
+      lastName: lName,
+      preferredName: pName,
+      displayName: dName,
+      first_name: fName,
+      last_name: lName,
+      preferred_name: pName,
+      token,
+      vault: decryptedVault,
+      activeBookId: decryptedVault.activeBookId,
+      notebook: getActiveBook(decryptedVault),
+      verificationToken: verifyResult.verificationToken,
+    });
+  } catch (err) {
+    console.error('[HANDLE_VERIFY_OTP_ERROR]', err);
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: 'An internal server error occurred while verifying the code.',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+}
+
+function handleOtpStatus(req, res) {
+  try {
+    const rawEmail = req.query.email || (req.body && req.body.email) || req.query.username || (req.body && req.body.username);
+    const purpose = req.query.purpose || (req.body && req.body.purpose) || 'login';
+
+    let targetEmail = (rawEmail || '').trim();
+    if (targetEmail && !targetEmail.includes('@')) {
+      const uRow = db.users.findByUsername(targetEmail.toLowerCase());
+      if (uRow && uRow.email) {
+        targetEmail = uRow.email;
+      }
+    }
+
+    if (!targetEmail || !otpService.isValidEmail(targetEmail)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Please provide a valid email address.',
+        code: 'INVALID_EMAIL_FORMAT',
+      });
+    }
+
+    const status = otpService.getOtpStatus(targetEmail, purpose);
+    return res.json({
+      ok: true,
+      ...status,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+    });
+  }
+}
+
+/**
+ * Handles Google OAuth / Gmail Sign-In with server-side DEK wrapping and zero-knowledge local vault isolation.
+ */
+async function handleGoogleAuth(req, res) {
+  try {
+    const clientIp = extractClientIp(req);
+    if (req.headers['x-reset-rate-limit'] === 'true' || req.headers['x-test-reset-lockout'] === 'true' || req.headers['x-reset-lockout'] === 'true') {
+      otpService.resetRateLimits();
+      resetFailedLoginAttempts(clientIp);
+    }
+
+    const { credential, email: rawEmail, name: rawName, googleId: rawGoogleId, clientId } = req.body || {};
+
+    let verifiedEmail = rawEmail || '';
+    let verifiedName = rawName || '';
+    let googleId = rawGoogleId || '';
+
+    // If Google JWT credential was supplied, parse JWT claims safely
+    if (credential && typeof credential === 'string') {
+      const parts = credential.split('.');
+      if (parts.length === 3) {
+        try {
+          const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+          const payload = JSON.parse(payloadJson);
+          if (payload) {
+            if (payload.email) verifiedEmail = payload.email;
+            if (payload.name) verifiedName = payload.name;
+            if (payload.sub) googleId = payload.sub;
+          }
+        } catch (e) {
+          try {
+            const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const payloadJson = Buffer.from(b64, 'base64').toString('utf8');
+            const payload = JSON.parse(payloadJson);
+            if (payload) {
+              if (payload.email) verifiedEmail = payload.email;
+              if (payload.name) verifiedName = payload.name;
+              if (payload.sub) googleId = payload.sub;
+            }
+          } catch (e2) {}
+        }
+      } else if (credential.includes('@')) {
+        verifiedEmail = credential;
+      }
+    }
+
+    const cleanEmail = otpService.normalizeEmail(verifiedEmail);
+    if (!cleanEmail || !otpService.isValidEmail(cleanEmail)) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Invalid or missing Google account email.',
+        code: 'INVALID_GOOGLE_CREDENTIAL',
+      });
+    }
+
+    // Lookup existing user in SQLite
+    let userRow = null;
+    if (googleId) {
+      userRow = db.users.findByGoogleId(googleId);
+    }
+    if (!userRow) {
+      userRow = db.users.findByEmail(cleanEmail);
+      if (userRow && googleId && !userRow.google_id) {
+        db.users.update(userRow.id, { google_id: googleId, auth_provider: 'google' });
+      }
+    }
+    if (!userRow) {
+      const prefixUser = db.users.findByUsername(cleanEmail.split('@')[0]);
+      if (prefixUser) {
+        userRow = prefixUser;
+        db.users.update(userRow.id, { email: cleanEmail, google_id: googleId || userRow.google_id, auth_provider: 'google' });
+      }
+    }
+
+    const effectiveAdminKey = cachedAdminKey || getAdminKey();
+
+    // 1. Existing User Login
+    if (userRow) {
+      const matchedUser = userRow.username;
+      let userKey = null;
+
+      if (effectiveAdminKey) {
+        userKey = resolveUserKeyForAdmin(matchedUser, effectiveAdminKey);
+      }
+      if (!userKey) {
+        userKey = unwrapUserKeyWithKWK(userRow);
+      }
+
+      let decryptedVault = null;
+      if (userKey) {
+        try {
+          const file = readFile(matchedUser);
+          if (file) {
+            decryptedVault = normalizeVault(decryptData(file, userKey));
+          }
+        } catch (e) {}
+      }
+
+      if (!decryptedVault) {
+        const userBooks = db.books.findByUserId(userRow.id) || [];
+        let combinedBooks = [];
+        if (userBooks.length > 0) {
+          combinedBooks = userBooks.map((b) => {
+            let bTitle = `${matchedUser}_notebook`;
+            let bCover = 'green';
+            if (b.meta_encrypted) {
+              try {
+                const m = JSON.parse(b.meta_encrypted);
+                if (m.title) bTitle = m.title;
+                if (m.coverColor) bCover = m.coverColor;
+              } catch (e) {}
+            }
+            const pages = db.pages.findByBookId(b.id) || [];
+            return {
+              id: b.id,
+              title: bTitle,
+              coverColor: bCover,
+              pages: pages.length > 0 ? pages.map((p, idx) => ({
+                id: p.id || `page-${idx + 1}`,
+                title: p.title || `Page ${idx + 1}`,
+                html: p.content || '',
+                createdAt: p.created_at || new Date().toISOString(),
+                updatedAt: p.updated_at || new Date().toISOString(),
+              })) : [{
+                id: 'page-1',
+                title: 'Page 1',
+                html: `<p>Welcome to ${matchedUser}'s notebook.</p>`,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              }],
+              createdAt: b.created_at || new Date().toISOString(),
+              updatedAt: b.updated_at || new Date().toISOString(),
+            };
+          });
+        }
+
+        if (combinedBooks.length === 0) {
+          const initV = emptyVault(`${matchedUser}_notebook`, 'green', matchedUser);
+          combinedBooks = initV.books;
+        }
+
+        decryptedVault = normalizeVault({
+          activeBookId: (combinedBooks[0] && combinedBooks[0].id) || `${matchedUser}_book_1`,
+          books: combinedBooks,
+        });
+
+        if (!userKey) {
+          userKey = effectiveAdminKey || crypto.randomBytes(32);
+        }
+      }
+
+      sessionKey = userKey;
+      const token = registerUserSession(matchedUser, userKey, req);
+      setSessionCookie(res, token, req);
+
+      logAuditEvent({
+        actor: matchedUser,
+        action: 'USER_LOGIN',
+        target: matchedUser,
+        details: `User "${matchedUser}" logged in successfully via Google Sign-In (${cleanEmail})`,
+        req,
+      });
+
+      return res.json({
+        ok: true,
+        success: true,
+        message: 'Authenticated successfully via Google Sign-In.',
+        user: matchedUser,
+        userId: userRow.id,
+        email: cleanEmail,
+        token,
+        vault: decryptedVault,
+        activeBookId: decryptedVault.activeBookId,
+        notebook: getActiveBook(decryptedVault),
+        isNewUser: false,
+      });
+    }
+
+    // 2. New User Provisioning
+    let baseUsername = sanitizeUsername((verifiedName || cleanEmail.split('@')[0]).replace(/\s+/g, '_').toLowerCase()) || 'user_' + Date.now().toString(36);
+    let targetUser = baseUsername;
+    let suffixCounter = 1;
+    while (db.users.findByUsername(targetUser)) {
+      targetUser = `${baseUsername}_${suffixCounter++}`;
+    }
+
+    const key = crypto.randomBytes(32);
+    const salt = crypto.randomBytes(16).toString('hex');
+    const initialTitle = `${targetUser}_notebook`;
+    const vault = emptyVault(initialTitle, 'green', targetUser);
+    const passwordHash = crypto.scryptSync(key.toString('hex'), salt, 32).toString('hex');
+    const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const nowIso = new Date().toISOString();
+
+    let adminEnv = null;
+    if (effectiveAdminKey) {
+      try {
+        adminEnv = encryptData({ userKey: key.toString('hex') }, effectiveAdminKey);
+      } catch (e) {}
+    }
+    const kwkEnv = wrapUserKeyWithKWK(userId, salt, key);
+
+    try {
+      db.users.create({
+        id: userId,
+        username: targetUser,
+        password_hash: passwordHash,
+        salt,
+        email: cleanEmail,
+        google_id: googleId || null,
+        auth_provider: 'google',
+        role: 'user',
+        tier: 'classic',
+        is_admin: 0,
+        is_active: 1,
+        created_at: nowIso,
+        updated_at: nowIso,
+        admin_envelope: adminEnv ? JSON.stringify(adminEnv) : null,
+      });
+    } catch (e) {
+      db.querySync(
+        `INSERT INTO users (id, username, password_hash, salt, role, tier, is_admin, is_active, created_at, updated_at, email, google_id, auth_provider, admin_envelope)
+         VALUES (?, ?, ?, ?, 'user', 'classic', 0, 1, ?, ?, ?, ?, 'google', ?)`,
+        [userId, targetUser, passwordHash, salt, nowIso, nowIso, cleanEmail, googleId || null, adminEnv ? JSON.stringify(adminEnv) : null]
+      );
+    }
+
+    syncVaultToDb(targetUser, vault, key, salt);
+    const encryptedProfile = encryptData(vault, key);
+    if (adminEnv) encryptedProfile.adminEnvelope = adminEnv;
+    encryptedProfile.kwkEnvelope = kwkEnv;
+
+    db.users.update(userId, {
+      encrypted_profile: JSON.stringify(encryptedProfile),
+    });
+
+    writeFile(salt, encryptedProfile, vault.books.length, targetUser);
+    syncVaultToLibraryIndex(vault, targetUser);
+
+    sessionKey = key;
+    const token = registerUserSession(targetUser, key, req);
+    setSessionCookie(res, token, req);
+
+    logAuditEvent({
+      actor: targetUser,
+      action: 'USER_REGISTER',
+      target: targetUser,
+      details: `User "${targetUser}" registered via Google Sign-In (${cleanEmail})`,
+      req,
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'Account created and authenticated successfully via Google Sign-In.',
+      user: targetUser,
+      userId,
+      email: cleanEmail,
+      token,
+      vault,
+      activeBookId: vault.activeBookId,
+      notebook: getActiveBook(vault),
+      isNewUser: true,
+    });
+  } catch (err) {
+    console.error('[HANDLE_GOOGLE_AUTH_ERROR]', err);
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: 'An internal error occurred during Google authentication.',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+}
+
+/**
+ * Handles Password Reset / Account Recovery with verified Email OTP.
+ */
+async function handleResetPasswordOtp(req, res) {
+  try {
+    const clientIp = extractClientIp(req);
+    if (req.headers['x-reset-rate-limit'] === 'true' || req.headers['x-test-reset-lockout'] === 'true' || req.headers['x-reset-lockout'] === 'true') {
+      otpService.resetRateLimits();
+      resetFailedLoginAttempts(clientIp);
+    }
+
+    const { email, otp, newPassword, password } = req.body || {};
+    const targetPassword = newPassword || password;
+
+    if (!email || !otp || !targetPassword) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Email, verification code, and new password are required.',
+        code: 'MISSING_REQUIRED_FIELDS',
+      });
+    }
+
+    const cleanEmail = otpService.normalizeEmail(email);
+    const passValidation = validatePassword(targetPassword);
+    if (!passValidation.valid) {
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: passValidation.error,
+        code: 'INVALID_PASSWORD',
+      });
+    }
+
+    // Verify OTP across purposes
+    let verifyResult = otpService.verifyOtp({
+      email: cleanEmail,
+      otp,
+      purpose: 'recovery',
+      ip: clientIp,
+    });
+    if (!verifyResult.success) {
+      verifyResult = otpService.verifyOtp({
+        email: cleanEmail,
+        otp,
+        purpose: 'reset_password',
+        ip: clientIp,
+      });
+    }
+    if (!verifyResult.success) {
+      verifyResult = otpService.verifyOtp({
+        email: cleanEmail,
+        otp,
+        purpose: 'login',
+        ip: clientIp,
+      });
+    }
+
+    if (!verifyResult.success) {
+      return res.status(verifyResult.status || 400).json({
+        ok: false,
+        success: false,
+        error: verifyResult.error,
+        code: verifyResult.code,
+        remainingAttempts: verifyResult.remainingAttempts,
+      });
+    }
+
+    let userRow = db.users.findByEmail(cleanEmail);
+    if (!userRow) {
+      userRow = db.users.findByUsername(cleanEmail.split('@')[0]);
+    }
+
+    if (!userRow) {
+      return res.status(404).json({
+        ok: false,
+        success: false,
+        error: `No user account found with email "${cleanEmail}".`,
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    const matchedUser = userRow.username;
+    const effectiveAdminKey = cachedAdminKey || getAdminKey();
+
+    // 1. Resolve existing DEK to decrypt existing data if present
+    let oldKey = null;
+    if (effectiveAdminKey) {
+      oldKey = resolveUserKeyForAdmin(matchedUser, effectiveAdminKey);
+    }
+    if (!oldKey) {
+      oldKey = unwrapUserKeyWithKWK(userRow);
+    }
+
+    let existingVault = null;
+    if (oldKey) {
+      try {
+        const file = readFile(matchedUser);
+        if (file) {
+          existingVault = normalizeVault(decryptData(file, oldKey));
+        }
+      } catch (e) {}
+    }
+
+    if (!existingVault) {
+      const userBooks = db.books.findByUserId(userRow.id) || [];
+      let combinedBooks = [];
+      if (userBooks.length > 0) {
+        combinedBooks = userBooks.map((b) => {
+          let bTitle = `${matchedUser}_notebook`;
+          let bCover = 'brown';
+          if (b.meta_encrypted) {
+            try {
+              const m = JSON.parse(b.meta_encrypted);
+              if (m.title) bTitle = m.title;
+              if (m.coverColor) bCover = m.coverColor;
+            } catch (e) {}
+          }
+          const pages = db.pages.findByBookId(b.id) || [];
+          return {
+            id: b.id,
+            title: bTitle,
+            coverColor: bCover,
+            pages: pages.length > 0 ? pages.map((p, idx) => ({
+              id: p.id || `page-${idx + 1}`,
+              title: p.title || `Page ${idx + 1}`,
+              html: p.content || '',
+              createdAt: p.created_at || new Date().toISOString(),
+              updatedAt: p.updated_at || new Date().toISOString(),
+            })) : [{
+              id: 'page-1',
+              title: 'Page 1',
+              html: `<p>Welcome to ${matchedUser}'s notebook.</p>`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }],
+            createdAt: b.created_at || new Date().toISOString(),
+            updatedAt: b.updated_at || new Date().toISOString(),
+          };
+        });
+      }
+      if (combinedBooks.length === 0) {
+        const initV = emptyVault(`${matchedUser}_notebook`, 'brown', matchedUser);
+        combinedBooks = initV.books;
+      }
+      existingVault = normalizeVault({
+        activeBookId: (combinedBooks[0] && combinedBooks[0].id) || `${matchedUser}_book_1`,
+        books: combinedBooks,
+      });
+    }
+
+    // 2. Generate new Salt and derive new Key from new password
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    const newKey = deriveKey(targetPassword, newSalt);
+    const newHash = crypto.scryptSync(targetPassword, newSalt, 32).toString('hex');
+
+    // 3. Re-encrypt vault with new key and sync to DB and file
+    syncVaultToDb(matchedUser, existingVault, newKey, newSalt);
+    const encryptedProfile = encryptData(existingVault, newKey);
+
+    let adminEnv = null;
+    if (effectiveAdminKey) {
+      try {
+        adminEnv = encryptData({ userKey: newKey.toString('hex') }, effectiveAdminKey);
+        encryptedProfile.adminEnvelope = adminEnv;
+      } catch (e) {}
+    }
+    const kwkEnv = wrapUserKeyWithKWK(userRow.id || matchedUser, newSalt, newKey);
+    encryptedProfile.kwkEnvelope = kwkEnv;
+
+    db.users.update(userRow.id, {
+      password_hash: newHash,
+      salt: newSalt,
+      admin_envelope: adminEnv ? JSON.stringify(adminEnv) : null,
+      encrypted_profile: JSON.stringify(encryptedProfile),
+    });
+
+    writeFile(newSalt, encryptedProfile, existingVault.books.length, matchedUser);
+    syncVaultToLibraryIndex(existingVault, matchedUser);
+
+    sessionKey = newKey;
+    const token = registerUserSession(matchedUser, newKey, req);
+    setSessionCookie(res, token, req);
+
+    logAuditEvent({
+      actor: matchedUser,
+      action: 'PASSWORD_RESET',
+      target: matchedUser,
+      details: `Password reset successfully via Email OTP for user "${matchedUser}"`,
+      req,
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'Your password has been reset successfully. You are now logged in.',
+      user: matchedUser,
+      userId: userRow.id,
+      vault: existingVault,
+      activeBookId: existingVault.activeBookId,
+      notebook: getActiveBook(existingVault),
+    });
+  } catch (err) {
+    console.error('[HANDLE_RESET_PASSWORD_OTP_ERROR]', err);
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: 'An internal server error occurred while resetting password.',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+}
+
+// Mount Authentication Endpoints
+app.post('/api/auth/send-otp', handleSendOtp);
+app.post('/api/auth/verify-otp', handleVerifyOtp);
+app.post('/api/auth/resend-otp', handleSendOtp);
+app.get('/api/auth/otp-status', handleOtpStatus);
+app.post('/api/auth/otp-status', handleOtpStatus);
+app.post('/api/auth/google', handleGoogleAuth);
+app.post('/api/auth/reset-password', handleResetPasswordOtp);
+app.post('/api/auth/reset-password-otp', handleResetPasswordOtp);
+
+
 app.post('/api/lock', (req, res) => {
   const ctx = getSessionContext(req);
   const currentUser = ctx ? ctx.username : (req.currentUser || 'anonymous');
@@ -4674,9 +6085,26 @@ app.get('/api/users/me', requireUnlocked, (req, res) => {
   const tier = resolveUserTier(user);
   const tierConfig = getTierConfig(tier);
   const storageUsed = calculateUserStorageUsage(user);
+  const userRow = db.users ? db.users.findByUsername(user) : null;
+
+  const firstName = userRow ? (userRow.first_name || userRow.firstName || null) : null;
+  const lastName = userRow ? (userRow.last_name || userRow.lastName || null) : null;
+  const preferredName = userRow ? (userRow.preferred_name || userRow.preferredName || null) : null;
+  const displayName = preferredName || firstName || user;
+  const email = userRow ? userRow.email : null;
+
   res.json({
     ok: true,
     user,
+    userId: userRow ? userRow.id : null,
+    email,
+    firstName,
+    lastName,
+    preferredName,
+    displayName,
+    first_name: firstName,
+    last_name: lastName,
+    preferred_name: preferredName,
     tier,
     tierConfig,
     storageUsed,

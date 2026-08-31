@@ -846,3 +846,8 @@ export interface AdminCheckUserPasswordResponse {
 
 export type ApiAdminCheckUserPasswordResponse = AdminCheckUserPasswordResponse;
 
+/**
+ * Re-export OTP types from ./otp
+ */
+export * from './otp';
+
