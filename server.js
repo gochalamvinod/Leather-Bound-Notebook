@@ -40,6 +40,25 @@ try {
   console.warn('[MAILER_LOAD_WARN] Failed loading mailer module:', e.message);
 }
 
+const { getGoogleOAuthConfig } = require('./lib/oauthConfig');
+// Initialize Google OAuth config and auto-discovery on startup
+getGoogleOAuthConfig({ silent: false });
+
+function getOAuthConfig() {
+  try {
+    return getGoogleOAuthConfig({ silent: true });
+  } catch (e) {
+    return {
+      clientId: process.env.GOOGLE_CLIENT_ID || null,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+      redirectUri: process.env.GOOGLE_REDIRECT_URI || null,
+      authUri: 'https://accounts.google.com/o/oauth2/v2/auth',
+      tokenUri: 'https://oauth2.googleapis.com/token',
+      configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    };
+  }
+}
+
 function resolveUserTier(username) {
   if (!username) return 'classic';
   const clean = username.toLowerCase().trim();
@@ -315,6 +334,30 @@ app.use((req, res, next) => {
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
     res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
+  next();
+});
+
+// Ensure req.cookies is populated from Cookie header for all requests
+app.use((req, res, next) => {
+  if (!req.cookies) {
+    req.cookies = {};
+    const cookieHeader = req.headers.cookie || '';
+    if (cookieHeader) {
+      const pairs = cookieHeader.split(';');
+      for (const pair of pairs) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx !== -1) {
+          const key = pair.slice(0, eqIdx).trim();
+          const val = pair.slice(eqIdx + 1).trim();
+          try {
+            req.cookies[key] = decodeURIComponent(val);
+          } catch (e) {
+            req.cookies[key] = val;
+          }
+        }
+      }
+    }
   }
   next();
 });
@@ -5557,6 +5600,217 @@ function handleOtpStatus(req, res) {
 }
 
 /**
+ * Shared helper to authenticate existing user (unlock vault) or provision new user
+ * in SQLite with AES-256 key, KWK wrapping, and default vault.
+ * Used by handleGoogleAuth (POST /api/auth/google) and OAuth callback (GET /api/auth/callback/google).
+ */
+async function authenticateOrProvisionGoogleUser({ cleanEmail, verifiedName, googleId, req, res, authMethod = 'Google Sign-In' }) {
+  // Lookup existing user in SQLite
+  let userRow = null;
+  if (googleId) {
+    userRow = db.users.findByGoogleId(googleId);
+  }
+  if (!userRow) {
+    userRow = db.users.findByEmail(cleanEmail);
+    if (userRow && googleId && !userRow.google_id) {
+      db.users.update(userRow.id, { google_id: googleId, auth_provider: 'google' });
+    }
+  }
+  if (!userRow) {
+    const prefixUser = db.users.findByUsername(cleanEmail.split('@')[0]);
+    if (prefixUser) {
+      userRow = prefixUser;
+      db.users.update(userRow.id, { email: cleanEmail, google_id: googleId || userRow.google_id, auth_provider: 'google' });
+    }
+  }
+
+  const effectiveAdminKey = cachedAdminKey || getAdminKey();
+
+  // 1. Existing User Login
+  if (userRow) {
+    const matchedUser = userRow.username;
+    let userKey = null;
+
+    if (effectiveAdminKey) {
+      userKey = resolveUserKeyForAdmin(matchedUser, effectiveAdminKey);
+    }
+    if (!userKey) {
+      userKey = unwrapUserKeyWithKWK(userRow);
+    }
+
+    let decryptedVault = null;
+    if (userKey) {
+      try {
+        const file = readFile(matchedUser);
+        if (file) {
+          decryptedVault = normalizeVault(decryptData(file, userKey));
+        }
+      } catch (e) {}
+    }
+
+    if (!decryptedVault) {
+      const userBooks = db.books.findByUserId(userRow.id) || [];
+      let combinedBooks = [];
+      if (userBooks.length > 0) {
+        combinedBooks = userBooks.map((b) => {
+          let bTitle = `${matchedUser}_notebook`;
+          let bCover = 'green';
+          if (b.meta_encrypted) {
+            try {
+              const m = JSON.parse(b.meta_encrypted);
+              if (m.title) bTitle = m.title;
+              if (m.coverColor) bCover = m.coverColor;
+            } catch (e) {}
+          }
+          const pages = db.pages.findByBookId(b.id) || [];
+          return {
+            id: b.id,
+            title: bTitle,
+            coverColor: bCover,
+            pages: pages.length > 0 ? pages.map((p, idx) => ({
+              id: p.id || `page-${idx + 1}`,
+              title: p.title || `Page ${idx + 1}`,
+              html: p.content || '',
+              createdAt: p.created_at || new Date().toISOString(),
+              updatedAt: p.updated_at || new Date().toISOString(),
+            })) : [{
+              id: 'page-1',
+              title: 'Page 1',
+              html: `<p>Welcome to ${matchedUser}'s notebook.</p>`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }],
+            createdAt: b.created_at || new Date().toISOString(),
+            updatedAt: b.updated_at || new Date().toISOString(),
+          };
+        });
+      }
+
+      if (combinedBooks.length === 0) {
+        const initV = emptyVault(`${matchedUser}_notebook`, 'green', matchedUser);
+        combinedBooks = initV.books;
+      }
+
+      decryptedVault = normalizeVault({
+        activeBookId: (combinedBooks[0] && combinedBooks[0].id) || `${matchedUser}_book_1`,
+        books: combinedBooks,
+      });
+
+      if (!userKey) {
+        userKey = effectiveAdminKey || crypto.randomBytes(32);
+      }
+    }
+
+    sessionKey = userKey;
+    const token = registerUserSession(matchedUser, userKey, req);
+    setSessionCookie(res, token, req);
+
+    logAuditEvent({
+      actor: matchedUser,
+      action: 'USER_LOGIN',
+      target: matchedUser,
+      details: `User "${matchedUser}" logged in successfully via ${authMethod} (${cleanEmail})`,
+      req,
+    });
+
+    return {
+      user: matchedUser,
+      userId: userRow.id,
+      email: cleanEmail,
+      token,
+      vault: decryptedVault,
+      activeBookId: decryptedVault.activeBookId,
+      notebook: getActiveBook(decryptedVault),
+      isNewUser: false,
+    };
+  }
+
+  // 2. New User Provisioning
+  let baseUsername = sanitizeUsername((verifiedName || cleanEmail.split('@')[0]).replace(/\s+/g, '_').toLowerCase()) || 'user_' + Date.now().toString(36);
+  let targetUser = baseUsername;
+  let suffixCounter = 1;
+  while (db.users.findByUsername(targetUser)) {
+    targetUser = `${baseUsername}_${suffixCounter++}`;
+  }
+
+  const key = crypto.randomBytes(32);
+  const salt = crypto.randomBytes(16).toString('hex');
+  const initialTitle = `${targetUser}_notebook`;
+  const vault = emptyVault(initialTitle, 'green', targetUser);
+  const passwordHash = crypto.scryptSync(key.toString('hex'), salt, 32).toString('hex');
+  const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const nowIso = new Date().toISOString();
+
+  let adminEnv = null;
+  if (effectiveAdminKey) {
+    try {
+      adminEnv = encryptData({ userKey: key.toString('hex') }, effectiveAdminKey);
+    } catch (e) {}
+  }
+  const kwkEnv = wrapUserKeyWithKWK(userId, salt, key);
+
+  try {
+    db.users.create({
+      id: userId,
+      username: targetUser,
+      password_hash: passwordHash,
+      salt,
+      email: cleanEmail,
+      google_id: googleId || null,
+      auth_provider: 'google',
+      role: 'user',
+      tier: 'classic',
+      is_admin: 0,
+      is_active: 1,
+      created_at: nowIso,
+      updated_at: nowIso,
+      admin_envelope: adminEnv ? JSON.stringify(adminEnv) : null,
+    });
+  } catch (e) {
+    db.querySync(
+      `INSERT INTO users (id, username, password_hash, salt, role, tier, is_admin, is_active, created_at, updated_at, email, google_id, auth_provider, admin_envelope)
+       VALUES (?, ?, ?, ?, 'user', 'classic', 0, 1, ?, ?, ?, ?, 'google', ?)`,
+      [userId, targetUser, passwordHash, salt, nowIso, nowIso, cleanEmail, googleId || null, adminEnv ? JSON.stringify(adminEnv) : null]
+    );
+  }
+
+  syncVaultToDb(targetUser, vault, key, salt);
+  const encryptedProfile = encryptData(vault, key);
+  if (adminEnv) encryptedProfile.adminEnvelope = adminEnv;
+  encryptedProfile.kwkEnvelope = kwkEnv;
+
+  db.users.update(userId, {
+    encrypted_profile: JSON.stringify(encryptedProfile),
+  });
+
+  writeFile(salt, encryptedProfile, vault.books.length, targetUser);
+  syncVaultToLibraryIndex(vault, targetUser);
+
+  sessionKey = key;
+  const token = registerUserSession(targetUser, key, req);
+  setSessionCookie(res, token, req);
+
+  logAuditEvent({
+    actor: targetUser,
+    action: 'USER_REGISTER',
+    target: targetUser,
+    details: `User "${targetUser}" registered via ${authMethod} (${cleanEmail})`,
+    req,
+  });
+
+  return {
+    user: targetUser,
+    userId,
+    email: cleanEmail,
+    token,
+    vault,
+    activeBookId: vault.activeBookId,
+    notebook: getActiveBook(vault),
+    isNewUser: true,
+  };
+}
+
+/**
  * Handles Google OAuth / Gmail Sign-In with server-side DEK wrapping and zero-knowledge local vault isolation.
  */
 async function handleGoogleAuth(req, res) {
@@ -5584,6 +5838,10 @@ async function handleGoogleAuth(req, res) {
             if (payload.email) verifiedEmail = payload.email;
             if (payload.name) verifiedName = payload.name;
             if (payload.sub) googleId = payload.sub;
+            const oauthCfg = getOAuthConfig();
+            if (payload.aud && oauthCfg.clientId && payload.aud !== oauthCfg.clientId) {
+              console.warn('[GOOGLE_AUTH_AUD_WARN] Token audience does not match server clientId:', payload.aud);
+            }
           }
         } catch (e) {
           try {
@@ -5594,6 +5852,10 @@ async function handleGoogleAuth(req, res) {
               if (payload.email) verifiedEmail = payload.email;
               if (payload.name) verifiedName = payload.name;
               if (payload.sub) googleId = payload.sub;
+              const oauthCfg = getOAuthConfig();
+              if (payload.aud && oauthCfg.clientId && payload.aud !== oauthCfg.clientId) {
+                console.warn('[GOOGLE_AUTH_AUD_WARN] Token audience does not match server clientId:', payload.aud);
+              }
             }
           } catch (e2) {}
         }
@@ -6051,6 +6313,226 @@ app.post('/api/auth/verify-otp', handleVerifyOtp);
 app.post('/api/auth/resend-otp', handleSendOtp);
 app.get('/api/auth/otp-status', handleOtpStatus);
 app.post('/api/auth/otp-status', handleOtpStatus);
+// Google OAuth Endpoints
+app.get('/api/auth/google/config', (req, res) => {
+  const config = getOAuthConfig();
+  if (!config.configured || !config.clientId) {
+    return res.json({
+      ok: false,
+      clientId: null,
+      error: 'Google OAuth is not configured on this server.',
+    });
+  }
+  // NEVER expose clientSecret in the response!
+  res.json({
+    ok: true,
+    clientId: config.clientId,
+  });
+});
+
+app.get('/api/auth/google', (req, res) => {
+  const config = getOAuthConfig();
+  if (!config.configured || !config.clientId) {
+    return res.status(503).json({
+      ok: false,
+      error: 'Google OAuth is not configured on this server.',
+    });
+  }
+
+  const isHttps = isVercel || req.secure || (req.headers && req.headers['x-forwarded-proto'] === 'https');
+  const stateToken = crypto.randomBytes(24).toString('hex');
+
+  // Store CSRF state in cookie
+  res.cookie('oauth_state', stateToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    secure: isHttps,
+    path: '/',
+  });
+
+  // Support optional returnTo query parameter
+  const rawReturnTo = req.query.returnTo;
+  if (typeof rawReturnTo === 'string' && rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//')) {
+    res.cookie('oauth_return_to', rawReturnTo, {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 10 * 60 * 1000,
+      secure: isHttps,
+      path: '/',
+    });
+  } else {
+    res.clearCookie('oauth_return_to', { path: '/' });
+  }
+
+  const authUrl = new URL(config.authUri || 'https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', config.clientId);
+  authUrl.searchParams.set('redirect_uri', config.redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'openid email profile');
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'select_account');
+  authUrl.searchParams.set('state', stateToken);
+
+  return res.redirect(302, authUrl.toString());
+});
+
+app.get('/api/auth/callback/google', async (req, res) => {
+  const config = getOAuthConfig();
+  try {
+    const { code, state, error: authError } = req.query;
+
+    // 1. Check for error returned by Google
+    if (authError) {
+      console.warn('[GOOGLE_CALLBACK_AUTH_ERROR]', authError, req.query.error_description || '');
+      res.clearCookie('oauth_state', { path: '/' });
+      res.clearCookie('oauth_return_to', { path: '/' });
+      return res.redirect(`/?error=${encodeURIComponent(authError)}`);
+    }
+
+    // 2. Validate CSRF state against cookie
+    const cookieState = req.cookies ? req.cookies.oauth_state : null;
+    if (!state || !cookieState || state !== cookieState) {
+      console.warn('[GOOGLE_CALLBACK_STATE_MISMATCH]', { stateReceived: !!state, cookieStateFound: !!cookieState });
+      res.clearCookie('oauth_state', { path: '/' });
+      res.clearCookie('oauth_return_to', { path: '/' });
+      if (req.headers.accept && req.headers.accept.includes('application/json')) {
+        return res.status(400).json({ ok: false, error: 'Invalid or expired OAuth state parameter.' });
+      }
+      return res.redirect('/?error=invalid_state');
+    }
+
+    // Always clear the CSRF state cookie after consumption
+    res.clearCookie('oauth_state', { path: '/' });
+
+    // 3. Authorization code check
+    if (!code) {
+      console.warn('[GOOGLE_CALLBACK_MISSING_CODE]');
+      res.clearCookie('oauth_return_to', { path: '/' });
+      if (req.headers.accept && req.headers.accept.includes('application/json')) {
+        return res.status(400).json({ ok: false, error: 'Missing authorization code.' });
+      }
+      return res.redirect('/?error=missing_code');
+    }
+
+    if (!config.configured || !config.clientId || !config.clientSecret) {
+      console.error('[GOOGLE_CALLBACK_NOT_CONFIGURED]');
+      res.clearCookie('oauth_return_to', { path: '/' });
+      return res.redirect('/?error=google_not_configured');
+    }
+
+    // 4. Token exchange with Google
+    const tokenUrl = config.tokenUri || 'https://oauth2.googleapis.com/token';
+    const bodyParams = new URLSearchParams({
+      code: String(code),
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: config.redirectUri,
+      grant_type: 'authorization_code',
+    });
+
+    let tokenData = null;
+    try {
+      const tokenRes = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: bodyParams.toString(),
+      });
+      tokenData = await tokenRes.json();
+    } catch (netErr) {
+      console.error('[GOOGLE_TOKEN_EXCHANGE_NETWORK_ERROR]', netErr);
+      res.clearCookie('oauth_return_to', { path: '/' });
+      return res.redirect('/?error=token_exchange_failed');
+    }
+
+    if (!tokenData || tokenData.error) {
+      console.error('[GOOGLE_TOKEN_EXCHANGE_ERROR]', tokenData);
+      res.clearCookie('oauth_return_to', { path: '/' });
+      const errParam = tokenData && tokenData.error ? tokenData.error : 'token_exchange_failed';
+      return res.redirect(`/?error=${encodeURIComponent(errParam)}`);
+    }
+
+    // 5. Decode ID token claims or fallback to userinfo
+    let verifiedEmail = '';
+    let verifiedName = '';
+    let googleId = '';
+
+    if (tokenData.id_token && typeof tokenData.id_token === 'string') {
+      const parts = tokenData.id_token.split('.');
+      if (parts.length === 3) {
+        try {
+          const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+          const payload = JSON.parse(payloadJson);
+          if (payload) {
+            if (payload.email) verifiedEmail = payload.email;
+            if (payload.name) verifiedName = payload.name;
+            if (payload.sub) googleId = payload.sub;
+          }
+        } catch (e) {
+          try {
+            const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const payloadJson = Buffer.from(b64, 'base64').toString('utf8');
+            const payload = JSON.parse(payloadJson);
+            if (payload) {
+              if (payload.email) verifiedEmail = payload.email;
+              if (payload.name) verifiedName = payload.name;
+              if (payload.sub) googleId = payload.sub;
+            }
+          } catch (e2) {
+            console.error('[GOOGLE_JWT_DECODE_ERROR]', e2.message);
+          }
+        }
+      }
+    }
+
+    // Fallback to /userinfo endpoint if ID token parsing was insufficient
+    if ((!verifiedEmail || !googleId) && tokenData.access_token) {
+      try {
+        const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        if (userInfoRes.ok) {
+          const userInfo = await userInfoRes.json();
+          if (userInfo.email) verifiedEmail = userInfo.email;
+          if (userInfo.name) verifiedName = userInfo.name;
+          if (userInfo.sub) googleId = userInfo.sub;
+        }
+      } catch (uiErr) {
+        console.error('[GOOGLE_USERINFO_FALLBACK_ERROR]', uiErr.message);
+      }
+    }
+
+    const cleanEmail = otpService.normalizeEmail(verifiedEmail);
+    if (!cleanEmail || !otpService.isValidEmail(cleanEmail)) {
+      console.warn('[GOOGLE_CALLBACK_INVALID_EMAIL]', verifiedEmail);
+      res.clearCookie('oauth_return_to', { path: '/' });
+      return res.redirect('/?error=invalid_google_email');
+    }
+    // 6. Provision or authenticate user and unlock vault in SQLite
+    await authenticateOrProvisionGoogleUser({
+      cleanEmail,
+      verifiedName,
+      googleId,
+      req,
+      res,
+      authMethod: 'Google OAuth Callback',
+    });
+
+    // 7. Redirect to returnTo or /
+    const rawReturnTo = req.cookies ? req.cookies.oauth_return_to : null;
+    res.clearCookie('oauth_return_to', { path: '/' });
+    const safeRedirect = (typeof rawReturnTo === 'string' && rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//')) ? rawReturnTo : '/';
+    return res.redirect(302, safeRedirect);
+  } catch (err) {
+    console.error('[GOOGLE_CALLBACK_UNHANDLED_ERROR]', err);
+    res.clearCookie('oauth_state', { path: '/' });
+    res.clearCookie('oauth_return_to', { path: '/' });
+    return res.redirect('/?error=google_auth_error');
+  }
+});
+
 app.post('/api/auth/google', handleGoogleAuth);
 app.post('/api/auth/reset-password', handleResetPasswordOtp);
 app.post('/api/auth/reset-password-otp', handleResetPasswordOtp);
@@ -6105,6 +6587,12 @@ app.get('/api/users/me', requireUnlocked, (req, res) => {
     first_name: firstName,
     last_name: lastName,
     preferred_name: preferredName,
+    role: userRow ? (userRow.role || (userRow.is_admin ? 'admin' : 'user')) : 'user',
+    authProvider: userRow ? (userRow.auth_provider || 'local') : 'local',
+    googleId: userRow ? userRow.google_id : null,
+    hasGoogleAuth: !!(userRow && userRow.google_id),
+    createdAt: userRow ? userRow.created_at : null,
+    updatedAt: userRow ? userRow.updated_at : null,
     tier,
     tierConfig,
     storageUsed,
@@ -6113,6 +6601,197 @@ app.get('/api/users/me', requireUnlocked, (req, res) => {
     maxTotalStorageBytes: tierConfig.maxTotalStorageBytes,
     maxVideoSizeBytes: tierConfig.maxVideoSizeBytes,
   });
+});
+
+app.get('/api/users/check-email', requireUnlocked, (req, res) => {
+  try {
+    const rawEmail = (req.query && req.query.email) || (req.body && req.body.email);
+    if (!rawEmail || typeof rawEmail !== 'string') {
+      return res.status(400).json({ ok: false, available: false, error: 'Email address is required.' });
+    }
+    const cleanEmail = otpService.normalizeEmail(rawEmail);
+    if (!cleanEmail || !otpService.isValidEmail(cleanEmail)) {
+      return res.status(400).json({ ok: false, available: false, error: 'Invalid email format.' });
+    }
+
+    const currentUser = req.currentUser;
+    const currentUserRow = db.users ? db.users.findByUsername(currentUser) : null;
+    const existingUser = db.users ? db.users.findByEmail(cleanEmail) : null;
+
+    if (currentUserRow && currentUserRow.email && currentUserRow.email.toLowerCase() === cleanEmail) {
+      return res.json({
+        ok: true,
+        email: cleanEmail,
+        available: true,
+        isCurrent: true,
+        message: 'This is your current email address.',
+      });
+    }
+
+    const isTaken = !!(existingUser && (!currentUserRow || existingUser.id !== currentUserRow.id));
+    res.json({
+      ok: true,
+      email: cleanEmail,
+      available: !isTaken,
+      isCurrent: false,
+      message: isTaken ? 'Email is already in use by another account.' : 'Email is available.',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, available: false, error: 'Could not check email: ' + err.message });
+  }
+});
+
+app.post('/api/users/profile', requireUnlocked, (req, res) => {
+  try {
+    const currentUser = req.currentUser;
+    if (!currentUser || currentUser === 'default') {
+      return res.status(401).json({ ok: false, error: 'Authentication required.' });
+    }
+
+    const userRow = db.users ? db.users.findByUsername(currentUser) : null;
+    if (!userRow) {
+      return res.status(404).json({ ok: false, error: `User "${currentUser}" not found.` });
+    }
+
+    const { username: rawNewUsername, email: rawNewEmail, firstName, lastName, preferredName } = req.body || {};
+
+    const updates = {
+      updated_at: new Date().toISOString(),
+    };
+
+    let targetUsername = currentUser;
+    let usernameChanged = false;
+
+    // 1. Handle Username Change
+    if (rawNewUsername && typeof rawNewUsername === 'string') {
+      const cleanNewUser = rawNewUsername.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 30);
+      if (cleanNewUser.length < 3) {
+        return res.status(400).json({ ok: false, error: 'Username must be at least 3 characters.' });
+      }
+
+      if (cleanNewUser.toLowerCase() !== currentUser.toLowerCase()) {
+        if (currentUser.toLowerCase() === 'admin' && cleanNewUser.toLowerCase() !== 'admin') {
+          return res.status(400).json({ ok: false, error: 'Master admin username cannot be renamed.' });
+        }
+
+        const existingInDb = db.users ? db.users.findByUsername(cleanNewUser) : null;
+        const newFilePath = getUserFilePath(cleanNewUser);
+        if (existingInDb || (fs.existsSync(newFilePath) && cleanNewUser.toLowerCase() !== currentUser.toLowerCase())) {
+          return res.status(400).json({ ok: false, error: `Username "${cleanNewUser}" is already taken.` });
+        }
+
+        const oldFilePath = getUserFilePath(currentUser);
+        if (fs.existsSync(oldFilePath) && oldFilePath !== DATA_FILE) {
+          try {
+            fs.renameSync(oldFilePath, newFilePath);
+          } catch (e) {
+            console.warn('[PROFILE_UPDATE_RENAME_WARN]', e.message);
+          }
+        }
+
+        try {
+          const lib = getLibraryIndex();
+          let changedLib = false;
+          if (lib && Array.isArray(lib.notebooks)) {
+            lib.notebooks.forEach((b) => {
+              if (b.owner && b.owner.toLowerCase() === currentUser.toLowerCase()) {
+                b.owner = cleanNewUser;
+                changedLib = true;
+              }
+            });
+          }
+          if (changedLib) {
+            fs.writeFileSync(INDEX_FILE, JSON.stringify(lib, null, 2));
+          }
+        } catch (e) {}
+
+        updates.username = cleanNewUser;
+        targetUsername = cleanNewUser;
+        usernameChanged = true;
+      }
+    }
+
+    // 2. Handle Email Change
+    let finalEmail = userRow.email;
+    if (rawNewEmail !== undefined) {
+      if (typeof rawNewEmail === 'string' && rawNewEmail.trim()) {
+        const cleanEmail = otpService.normalizeEmail(rawNewEmail);
+        if (!cleanEmail || !otpService.isValidEmail(cleanEmail)) {
+          return res.status(400).json({ ok: false, error: 'Invalid email address format.' });
+        }
+
+        const existingEmailUser = db.users ? db.users.findByEmail(cleanEmail) : null;
+        if (existingEmailUser && existingEmailUser.id !== userRow.id) {
+          return res.status(400).json({ ok: false, error: 'Email address is already in use by another account.' });
+        }
+
+        updates.email = cleanEmail;
+        finalEmail = cleanEmail;
+      } else if (rawNewEmail === null || rawNewEmail === '') {
+        updates.email = null;
+        finalEmail = null;
+      }
+    }
+
+    // 3. Handle Names
+    if (firstName !== undefined) {
+      updates.first_name = typeof firstName === 'string' ? firstName.trim().slice(0, 60) : null;
+    }
+    if (lastName !== undefined) {
+      updates.last_name = typeof lastName === 'string' ? lastName.trim().slice(0, 60) : null;
+    }
+    if (preferredName !== undefined) {
+      updates.preferred_name = typeof preferredName === 'string' ? preferredName.trim().slice(0, 60) : null;
+    }
+
+    db.users.update(userRow.id, updates);
+
+    if (usernameChanged) {
+      const activeKey = sessionKey || (userSessions.get(currentUser.toLowerCase())?.key);
+      if (userSessions.has(currentUser.toLowerCase())) {
+        userSessions.delete(currentUser.toLowerCase());
+      }
+      if (activeKey) {
+        const newToken = registerUserSession(targetUsername, activeKey, req);
+        setSessionCookie(res, newToken, req);
+      }
+      req.currentUser = targetUsername;
+    }
+
+    const updatedRow = db.users.findByUsername(targetUsername);
+    const resolvedFirst = updatedRow ? updatedRow.first_name : (updates.first_name || null);
+    const resolvedLast = updatedRow ? updatedRow.last_name : (updates.last_name || null);
+    const resolvedPref = updatedRow ? updatedRow.preferred_name : (updates.preferred_name || null);
+    const displayName = resolvedPref || resolvedFirst || targetUsername;
+
+    logAuditEvent({
+      actor: currentUser,
+      action: 'USER_PROFILE_UPDATE',
+      target: targetUsername,
+      details: `User profile updated for "${currentUser}"${usernameChanged ? ` (renamed to "${targetUsername}")` : ''}`,
+      req,
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'Profile updated successfully.',
+      user: targetUsername,
+      userId: userRow.id,
+      email: finalEmail,
+      firstName: resolvedFirst,
+      lastName: resolvedLast,
+      preferredName: resolvedPref,
+      displayName,
+      usernameChanged,
+    });
+  } catch (err) {
+    console.error('[HANDLE_UPDATE_PROFILE_ERROR]', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to update profile: ' + err.message,
+    });
+  }
 });
 
 app.get('/api/user/tier', requireUnlocked, (req, res) => {

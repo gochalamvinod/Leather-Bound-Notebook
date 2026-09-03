@@ -4,6 +4,7 @@ import { api } from '../../lib/api/client';
 import { PasswordStrengthMeter } from '../ui/PasswordStrengthMeter';
 import { useAuth } from '../../context/AuthContext';
 import OtpVerificationPanel from './OtpVerificationPanel';
+import GoogleAuthButton from './GoogleAuthButton';
 import { VerifyOtpRequest } from '../../types/otp';
 import useOtpTimer from '../../hooks/useOtpTimer';
 
@@ -43,7 +44,7 @@ export const RegisterTab: React.FC<RegisterTabProps> = ({
   initialEmail = '',
   autoNotice = null,
 }) => {
-  const { sendOtp, verifyOtp } = useAuth();
+  const { sendOtp, verifyOtp, loginWithGoogle } = useAuth();
 
   // Wizard step: 1 = Profile + Email, 2 = OTP verify, 3 = Username + Password + Vault
   const [step, setStep] = useState<WizardStep>(1);
@@ -330,7 +331,32 @@ export const RegisterTab: React.FC<RegisterTabProps> = ({
 
       {/* ═══════ STEP 1: Profile + Email ═══════ */}
       {step === 1 && (
-        <form className="auth-pill-form" onSubmit={handleStep1Submit} noValidate>
+        <>
+          {/* Quick Sign-Up via Google */}
+          <div className="auth-social-stack" style={{ marginBottom: '14px' }}>
+            <GoogleAuthButton
+              label="Sign up with Google"
+              onSuccess={async (credential) => {
+                setLocalError(null);
+                try {
+                  const ok = await loginWithGoogle({ credential });
+                  if (!ok) {
+                    setLocalError('Google registration failed. Please try again.');
+                  }
+                } catch (err: any) {
+                  setLocalError(err?.message || 'Google registration failed.');
+                }
+              }}
+              onError={(err) => setLocalError(err)}
+              disabled={otpSending || loading}
+            />
+          </div>
+
+          <div className="auth-social-divider" style={{ margin: '10px 0 16px 0' }}>
+            <span className="auth-social-divider-text">OR REGISTER WITH EMAIL</span>
+          </div>
+
+          <form className="auth-pill-form" onSubmit={handleStep1Submit} noValidate>
           {/* First Name */}
           <div className="pill-input-group">
             <svg className="pill-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -417,6 +443,7 @@ export const RegisterTab: React.FC<RegisterTabProps> = ({
             {otpSending ? 'SENDING VERIFICATION CODE...' : 'CONTINUE & VERIFY EMAIL'}
           </button>
         </form>
+        </>
       )}
 
       {/* ═══════ STEP 2: OTP Verification ═══════ */}

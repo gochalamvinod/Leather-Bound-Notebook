@@ -29,7 +29,7 @@ declare global {
 // Default Google OAuth Client ID
 const DEFAULT_CLIENT_ID =
   (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-  '845928731571-66hm84u21smlmq6bv8mtrbhppqsmabcv.apps.googleusercontent.com';
+  '309183573806-f65n2csjthbct96mmr3jtfq74ke7kf5v.apps.googleusercontent.com';
 
 export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
   onSuccess,
@@ -41,17 +41,50 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
   theme = 'parchment',
 }) => {
   const [internalLoading, setInternalLoading] = useState<boolean>(false);
+  const [clientId, setClientId] = useState<string>(
+    (typeof window !== 'undefined' && (window as any).__GOOGLE_CLIENT_ID) ||
+    (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+    DEFAULT_CLIENT_ID
+  );
+  const [gisRendered, setGisRendered] = useState<boolean>(false);
+  const [gisPromptDismissed, setGisPromptDismissed] = useState<boolean>(false);
+  const [gisBlocked, setGisBlocked] = useState<boolean>(false);
+
   const gisBtnRef = useRef<HTMLDivElement | null>(null);
   const isLoading = loading || internalLoading;
 
+  // Dynamically fetch active Google client ID from backend if available, fallback to env
   useEffect(() => {
-    const activeClientId =
-      (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-      (typeof window !== 'undefined' && (window as any).__GOOGLE_CLIENT_ID) ||
-      DEFAULT_CLIENT_ID;
+    let isMounted = true;
+    fetch('/api/auth/google/config')
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted && data?.clientId) {
+          setClientId(data.clientId);
+          if (typeof window !== 'undefined') {
+            (window as any).__GOOGLE_CLIENT_ID = data.clientId;
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Google client config fetch failed, using fallback client ID:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const activeClientId = clientId || DEFAULT_CLIENT_ID;
 
     // Check if Google Identity Services is available
     const initGis = () => {
+      if (isCancelled) return;
       if (window.google?.accounts?.id && activeClientId) {
         try {
           window.google.accounts.id.initialize({
@@ -64,12 +97,12 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
                 } catch (err: any) {
                   onError?.(err?.message || 'Google sign-in failed.');
                 } finally {
-                  setInternalLoading(false);
+                  if (!isCancelled) setInternalLoading(false);
                 }
               }
             },
-            auto_select: true,
-            cancel_on_tap_outside: false,
+            auto_select: false,
+            cancel_on_tap_outside: true,
             context: 'signin',
           });
 
@@ -85,16 +118,25 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
               logo_alignment: 'left',
               width: 320,
             });
+            setGisRendered(true);
           }
 
-          // Trigger Google One Tap prompt in top right
-          window.google.accounts.id.prompt((notification) => {
-            if (notification.isNotDisplayed()) {
-              console.log('Google One Tap not displayed reason:', notification.getNotDisplayedReason());
+          // Trigger Google One Tap prompt and listen for dismissal/blocked status
+          window.google.accounts.id.prompt((notification: any) => {
+            if (isCancelled) return;
+            if (
+              notification?.isNotDisplayed?.() ||
+              notification?.isSkippedMoment?.() ||
+              notification?.isDismissedMoment?.()
+            ) {
+              setGisPromptDismissed(true);
             }
           });
         } catch (err) {
           console.warn('Google Identity Services initialization error:', err);
+          if (!isCancelled) {
+            setGisBlocked(true);
+          }
         }
       }
     };
@@ -102,45 +144,81 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
     if (window.google?.accounts?.id) {
       initGis();
     } else {
+      let attempts = 0;
+      const maxAttempts = 15; // 4.5 seconds poll
       const timer = setInterval(() => {
+        attempts++;
         if (window.google?.accounts?.id) {
           clearInterval(timer);
           initGis();
+        } else if (attempts >= maxAttempts) {
+          clearInterval(timer);
+          if (!isCancelled) {
+            setGisBlocked(true);
+          }
         }
       }, 300);
-      return () => clearInterval(timer);
+
+      return () => {
+        isCancelled = true;
+        clearInterval(timer);
+      };
     }
-  }, [onSuccess, onError]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [clientId, onSuccess, onError]);
+
+  const redirectToGoogleOAuth = () => {
+    window.location.href = '/api/auth/google';
+  };
 
   const handleClick = () => {
     if (disabled || isLoading) return;
 
-    if (window.google?.accounts?.id) {
-      try {
-        window.google.accounts.id.prompt((notification) => {
-          if (notification.isSkippedMoment() || notification.isDismissedMoment()) {
-            console.log('User dismissed Google prompt');
-          }
-        });
-      } catch (e) {
-        console.warn('GIS prompt error:', e);
-      }
+    // Seamless fallback logic: if GIS prompt is dismissed, blocked, or unavailable, redirect directly to /api/auth/google
+    if (!window.google?.accounts?.id || gisPromptDismissed || gisBlocked || !gisRendered) {
+      redirectToGoogleOAuth();
+      return;
+    }
+
+    try {
+      window.google.accounts.id.prompt((notification: any) => {
+        if (
+          notification?.isNotDisplayed?.() ||
+          notification?.isSkippedMoment?.() ||
+          notification?.isDismissedMoment?.()
+        ) {
+          setGisPromptDismissed(true);
+          redirectToGoogleOAuth();
+        }
+      });
+    } catch (e) {
+      console.warn('GIS prompt error, falling back to direct redirect:', e);
+      redirectToGoogleOAuth();
     }
   };
 
   return (
-    <div className={`google-auth-wrapper ${className}`}>
+    <div className={`google-auth-wrapper ${className}`} data-testid="google-auth-wrapper">
       {/* Official Google Identity Services Rendered Button */}
-      <div ref={gisBtnRef} className="google-gis-btn-container" onClick={handleClick} />
+      <div
+        ref={gisBtnRef}
+        className="google-gis-btn-container"
+        onClick={handleClick}
+        style={{ display: gisRendered && !isLoading ? 'flex' : 'none' }}
+      />
 
-      {/* Fallback button if GIS script is still loading */}
-      {(!window.google?.accounts?.id || isLoading) && (
+      {/* Fallback button if GIS script is loading, blocked, unavailable, or in loading state */}
+      {(!gisRendered || isLoading) && (
         <button
           type="button"
           className={`google-official-btn theme-${theme}`}
           onClick={handleClick}
           disabled={disabled || isLoading}
           aria-busy={isLoading}
+          data-testid="google-auth-button"
         >
           <div className="google-icon-wrapper">
             <svg className="google-icon-svg" viewBox="0 0 24 24" width="18" height="18">

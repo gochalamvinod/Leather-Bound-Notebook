@@ -57,6 +57,9 @@ import type {
   VerifyOtpResponse,
   ResetPasswordWithOtpRequest,
   GoogleAuthRequest,
+  UpdateProfileRequest,
+  UpdateProfileResponse,
+  CheckEmailResponse,
 } from '../../types/api';
 
 /**
@@ -175,6 +178,17 @@ export const api = {
 
   /** Get current authenticated user */
   getMe: () => request<UserMeResponse>('/api/users/me'),
+
+  /** Update user profile details (username, email, personal names) */
+  updateProfile: (body: UpdateProfileRequest) =>
+    request<UpdateProfileResponse>('/api/users/profile', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Check if an email address is available or already in use */
+  checkEmail: (email: string) =>
+    request<CheckEmailResponse>(`/api/users/check-email?email=${encodeURIComponent(email)}`),
 
   /** Fetch active notebook data and pages */
   getNotebook: () => request<UnlockResponse>('/api/notebook'),
