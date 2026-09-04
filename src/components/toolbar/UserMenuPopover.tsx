@@ -10,6 +10,7 @@ export interface UserMenuPopoverProps {
   isAdmin?: boolean;
   booksCount?: number;
   storageUsedBytes?: number;
+  onOpenProfile?: () => void;
   onOpenUpgrade: () => void;
   onOpenBookshelf: () => void;
   onOpenSettings: () => void;
@@ -26,6 +27,7 @@ export const UserMenuPopover: React.FC<UserMenuPopoverProps> = ({
   isAdmin = false,
   booksCount = 1,
   storageUsedBytes = 0,
+  onOpenProfile,
   onOpenUpgrade,
   onOpenBookshelf,
   onOpenSettings,
@@ -122,6 +124,24 @@ export const UserMenuPopover: React.FC<UserMenuPopoverProps> = ({
 
       {/* Popover Action Menu List */}
       <div className="user-popover-menu-list">
+        {onOpenProfile && (
+          <button
+            type="button"
+            className="user-popover-item"
+            onClick={() => {
+              onClose();
+              onOpenProfile();
+            }}
+          >
+            <span className="user-menu-item-icon">👤</span>
+            <div className="user-menu-item-text">
+              <strong>User Profile &amp; Account</strong>
+              <small>View details, edit username &amp; email</small>
+            </div>
+            <span className="user-menu-chevron">›</span>
+          </button>
+        )}
+
         <button
           type="button"
           className="user-popover-item user-popover-item-highlight"

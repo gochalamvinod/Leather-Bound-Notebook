@@ -14,6 +14,7 @@ export interface MobileNavigationDrawerProps {
   isAdmin?: boolean;
   booksCount?: number;
   storageUsedBytes?: number;
+  onOpenProfile?: () => void;
   onOpenBookshelf: () => void;
   onOpenSettings: () => void;
   onOpenAdmin?: () => void;
@@ -46,6 +47,7 @@ export const MobileNavigationDrawer: React.FC<MobileNavigationDrawerProps> = ({
   isAdmin = false,
   booksCount = 1,
   storageUsedBytes = 0,
+  onOpenProfile,
   onOpenBookshelf,
   onOpenSettings,
   onOpenAdmin,
