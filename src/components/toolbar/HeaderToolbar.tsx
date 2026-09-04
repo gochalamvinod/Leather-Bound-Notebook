@@ -408,6 +408,7 @@ export const HeaderToolbar: React.FC<HeaderToolbarProps> = ({
         currentUser={currentUser}
         currentTier={currentTier}
         isAdmin={isAdmin}
+        onOpenProfile={onOpenProfile}
         onOpenBookshelf={onOpenBookshelf}
         onOpenSettings={onOpenSettings}
         onOpenAdmin={onOpenAdmin}

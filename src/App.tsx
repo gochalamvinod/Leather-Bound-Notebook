@@ -12,6 +12,7 @@ import ImageOverlay from './components/media/ImageOverlay';
 import MediaUploadToast from './components/media/MediaUploadToast';
 import SearchEmbedModal from './components/embeds/SearchEmbedModal';
 import AdminDashboardModal from './components/admin/AdminDashboardModal';
+import ProfileModal from './components/modals/ProfileModal';
 import { PageData, CoverTheme } from './types/notebook';
 import {
   DEFAULT_FONT,
@@ -75,6 +76,7 @@ const NotebookWorkspace: React.FC = () => {
   const [isBookshelfOpen, setIsBookshelfOpen] = useState<boolean>(false);
   const [isNewBookOpen, setIsNewBookOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isSearchEmbedOpen, setIsSearchEmbedOpen] = useState<boolean>(false);
 

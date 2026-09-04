@@ -158,6 +158,36 @@ export const MobileNavigationDrawer: React.FC<MobileNavigationDrawerProps> = ({
                   <span>{isUltimate ? 'View Ultimate Membership' : 'Redeem License Key / Upgrade'}</span>
                 </button>
               )}
+
+              {onOpenProfile && (
+                <button
+                  type="button"
+                  className="mobile-profile-btn"
+                  onClick={() => {
+                    onClose();
+                    onOpenProfile();
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    width: '100%',
+                    padding: '8px 12px',
+                    marginTop: '8px',
+                    background: 'rgba(184, 147, 90, 0.12)',
+                    border: '1px solid rgba(184, 147, 90, 0.35)',
+                    borderRadius: '7px',
+                    color: 'var(--brass-bright, #e6c88b)',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span>👤</span>
+                  <span>User Profile &amp; Account</span>
+                </button>
+              )}
             </div>
           )}
 
