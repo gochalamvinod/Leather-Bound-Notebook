@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 
 export interface GoogleAuthButtonProps {
   onSuccess: (credential: string) => Promise<void>;
@@ -11,25 +11,6 @@ export interface GoogleAuthButtonProps {
   initialEmail?: string;
   initialName?: string;
 }
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: any) => void;
-          renderButton: (parent: HTMLElement, options: any) => void;
-          prompt: (momentListener?: (notification: any) => void) => void;
-        };
-      };
-    };
-  }
-}
-
-// Default Google OAuth Client ID
-const DEFAULT_CLIENT_ID =
-  (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-  '309183573806-f65n2csjthbct96mmr3jtfq74ke7kf5v.apps.googleusercontent.com';
 
 export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
   onSuccess: _onSuccess,
