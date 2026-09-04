@@ -548,6 +548,7 @@ const NotebookWorkspace: React.FC = () => {
         onDocumentUpload={handleToolbarDocumentUpload}
         onInsertLink={handleToolbarInsertLink}
         onOpenSearchEmbed={() => setIsSearchEmbedOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
         onOpenBookshelf={() => setIsBookshelfOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
@@ -648,6 +649,11 @@ const NotebookWorkspace: React.FC = () => {
       <AdminDashboardModal
         isOpen={isAdminOpen}
         onClose={() => setIsAdminOpen(false)}
+      />
+
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
       />
 
       {/* Guild Master VIP Upgrade Modal */}
