@@ -11,6 +11,8 @@ import {
   VerifyOtpResponse,
   ResetPasswordWithOtpRequest,
   GoogleAuthRequest,
+  UpdateProfileRequest,
+  UpdateProfileResponse,
 } from '../types/api';
 
 export interface AuthContextType {
@@ -37,6 +39,7 @@ export interface AuthContextType {
   lock: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<OkResponse>;
   getMe: () => Promise<UserMeResponse>;
+  updateProfile: (body: UpdateProfileRequest) => Promise<UpdateProfileResponse>;
   refreshLibrary: () => Promise<BookshelfEntry[]>;
   handleSessionLocked: (msg?: string) => void;
   startLockoutCountdown: (seconds: number) => void;
@@ -386,6 +389,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [handleSessionLocked]);
 
+  const updateProfile = useCallback(
+    async (body: UpdateProfileRequest): Promise<UpdateProfileResponse> => {
+      try {
+        const res = await api.updateProfile(body);
+        if (res.ok) {
+          if (res.user) {
+            setCurrentUser(res.user);
+          }
+          await refreshLibrary().catch(() => {});
+          await checkStatus().catch(() => {});
+        }
+        return res;
+      } catch (err: any) {
+        if (err.status === 401) {
+          handleSessionLocked();
+        }
+        throw err;
+      }
+    },
+    [handleSessionLocked, refreshLibrary, checkStatus]
+  );
+
   useEffect(() => {
     checkStatus();
     return () => {
@@ -444,6 +469,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lock,
     changePassword,
     getMe,
+    updateProfile,
     refreshLibrary,
     handleSessionLocked,
     startLockoutCountdown,

@@ -33,6 +33,7 @@ export interface HeaderToolbarProps {
   onDocumentUpload?: (file: File) => void;
   onInsertLink?: () => void;
   onOpenSearchEmbed?: () => void;
+  onOpenProfile?: () => void;
   onOpenBookshelf: () => void;
   onOpenSettings: () => void;
   onOpenAdmin?: () => void;
@@ -49,6 +50,7 @@ export const HeaderToolbar: React.FC<HeaderToolbarProps> = ({
   isAdmin = false,
   activeFont,
   activeFontSize,
+  onOpenProfile,
   textColor,
   highlightColor,
   isBold,
@@ -350,6 +352,7 @@ export const HeaderToolbar: React.FC<HeaderToolbarProps> = ({
                 currentUser={currentUser}
                 currentTier={currentTier}
                 isAdmin={isAdmin}
+                onOpenProfile={onOpenProfile}
                 onOpenUpgrade={onOpenUpgrade || (() => {})}
                 onOpenBookshelf={onOpenBookshelf}
                 onOpenSettings={onOpenSettings}
@@ -405,6 +408,7 @@ export const HeaderToolbar: React.FC<HeaderToolbarProps> = ({
         currentUser={currentUser}
         currentTier={currentTier}
         isAdmin={isAdmin}
+        onOpenProfile={onOpenProfile}
         onOpenBookshelf={onOpenBookshelf}
         onOpenSettings={onOpenSettings}
         onOpenAdmin={onOpenAdmin}

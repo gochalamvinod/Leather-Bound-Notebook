@@ -85,9 +85,62 @@ export type ApiOkResponse = OkResponse;
 export interface UserMeResponse {
   ok: true;
   user: string;
+  userId?: string | null;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  preferredName?: string | null;
+  displayName?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  preferred_name?: string | null;
+  role?: string;
+  authProvider?: string;
+  googleId?: string | null;
+  hasGoogleAuth?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  tier?: 'classic' | 'premium' | 'ultimate';
+  storageUsed?: number;
+  maxBooks?: number;
+  maxPagesPerBook?: number;
+  maxTotalStorageBytes?: number;
+  maxVideoSizeBytes?: number;
 }
 
 export type ApiUserMeResponse = UserMeResponse;
+
+export interface UpdateProfileRequest {
+  username?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  preferredName?: string;
+}
+
+export interface UpdateProfileResponse {
+  ok: boolean;
+  success?: boolean;
+  message?: string;
+  user?: string;
+  userId?: string;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  preferredName?: string | null;
+  displayName?: string;
+  usernameChanged?: boolean;
+  error?: string;
+}
+
+export interface CheckEmailResponse {
+  ok: boolean;
+  email: string;
+  available: boolean;
+  isCurrent?: boolean;
+  message?: string;
+  error?: string;
+}
 
 /**
  * Get active notebook response: GET /api/notebook

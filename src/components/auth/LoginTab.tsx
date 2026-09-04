@@ -3,6 +3,7 @@ import { BookshelfEntry } from '../../types/notebook';
 import { useAuth } from '../../context/AuthContext';
 import AuthSegmentedTabs, { AuthLoginMode } from './AuthSegmentedTabs';
 import OtpVerificationPanel from './OtpVerificationPanel';
+import GoogleAuthButton from './GoogleAuthButton';
 
 export interface LoginTabProps {
   selectedBook: BookshelfEntry | null;
@@ -32,7 +33,7 @@ export const LoginTab: React.FC<LoginTabProps> = ({
   loading = false,
   initialUsername = '',
 }) => {
-  const { sendOtp, verifyOtp } = useAuth();
+  const { sendOtp, verifyOtp, loginWithGoogle } = useAuth();
 
   // Mode: Master Password vs Email + OTP
   const [loginMode, setLoginMode] = useState<AuthLoginMode>('password');
@@ -54,6 +55,28 @@ export const LoginTab: React.FC<LoginTabProps> = ({
 
   const [localError, setLocalError] = useState<string | null>(null);
   const [localSuccess, setLocalSuccess] = useState<string | null>(null);
+
+  // Check for Google OAuth callback error in URL parameters
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const urlError = params.get('error');
+      if (urlError) {
+        if (urlError === 'access_denied') {
+          setLocalError('Google sign-in was cancelled or access was denied.');
+        } else if (urlError === 'invalid_state') {
+          setLocalError('Google authentication failed: invalid or expired session state. Please try again.');
+        } else if (urlError === 'token_exchange_failed') {
+          setLocalError('Failed to exchange authorization token with Google.');
+        } else {
+          setLocalError(`Google sign-in error: ${decodeURIComponent(urlError)}`);
+        }
+        // Clean URL parameter without reloading
+        const cleanPath = window.location.pathname;
+        window.history.replaceState({}, document.title, cleanPath);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (initialUsername) {
@@ -253,6 +276,29 @@ export const LoginTab: React.FC<LoginTabProps> = ({
           </button>
         </div>
       )}
+
+      {/* Google Sign-In */}
+      <div className="auth-social-stack" style={{ marginBottom: '14px' }}>
+        <GoogleAuthButton
+          onSuccess={async (credential) => {
+            setLocalError(null);
+            try {
+              const ok = await loginWithGoogle({ credential });
+              if (!ok) {
+                setLocalError('Google authentication failed. Please try again.');
+              }
+            } catch (err: any) {
+              setLocalError(err?.message || 'Google sign-in failed.');
+            }
+          }}
+          onError={(err) => setLocalError(err)}
+          disabled={submitting || otpSending || otpVerifying || lockedOut}
+        />
+      </div>
+
+      <div className="auth-social-divider" style={{ margin: '10px 0 16px 0' }}>
+        <span className="auth-social-divider-text">OR CONTINUE WITH</span>
+      </div>
 
       {/* Segmented Auth Mode Switcher */}
       <AuthSegmentedTabs
