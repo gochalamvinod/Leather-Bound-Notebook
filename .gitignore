@@ -9,6 +9,8 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+client_secret*.json
+client_secret_*.json
 
 # Production build
 dist/

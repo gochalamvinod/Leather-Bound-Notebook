@@ -1,5 +1,5 @@
 @echo off
-title Leatherbound Notebook — Support Email Setup
+title Leatherbound Notebook — One-Time Deployment & Support Setup
 cd /d "%~dp0"
 
 node lib\configure_smtp.js
