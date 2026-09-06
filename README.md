@@ -9,14 +9,70 @@
 [![Three.js](https://img.shields.io/badge/Three.js-r165-black.svg?style=flat-square&logo=three.js)](https://threejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-7.3-646CFF.svg?style=flat-square&logo=vite)](https://vitejs.dev/)
 [![Express](https://img.shields.io/badge/Express-4.19-lightgrey.svg?style=flat-square&logo=express)](https://expressjs.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-Database-003B57.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
+[![Google OAuth 2.0](https://img.shields.io/badge/Google%20OAuth-2.0-4285F4.svg?style=flat-square&logo=google)](https://developers.google.com/identity/protocols/oauth2)
 [![Repository: Private](https://img.shields.io/badge/Repository-Private-black.svg?style=flat-square)](https://github.com/gochalamvinod/LeatherBound-Notebook)
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg?style=flat-square)](#-license--intellectual-property)
 
 <p align="center">
   <b>Experience the tactile warmth of a classic leatherbound journal combined with modern digital productivity.</b><br>
-  Self-hosted, zero-cloud data leakage, military-grade client encryption, hardware-accelerated 3D interactions, and authentic SMTP verification.
+  Self-hosted, zero-cloud data leakage, military-grade client encryption, hardware-accelerated 3D interactions, zero-popup Google Sign-In, and authentic SMTP delivery.
 </p>
 
+</div>
+
+---
+
+## 🎬 30-Second Interactive Feature Preview
+
+<div align="center">
+  <p><b>Experience the full 30-second opening and feature tour:</b></p>
+  <img src="assets/previews/leatherbound_preview.gif" width="100%" alt="Leatherbound Notebook 30-Second Interactive Tour" style="border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,0.85); border: 1px solid #d4af37;" />
+  <br><br>
+  <p>
+    <b>📹 Full 30-Second High-Definition Video Tour:</b><br>
+    <a href="assets/previews/leatherbound_preview_30s.mp4">▶ <b>Download / Watch 1080p MP4 Video</b></a> &bull;
+    <a href="assets/previews/leatherbound_preview_30s.webm">▶ <b>Play High-Efficiency WebM Video</b></a>
+  </p>
+</div>
+
+---
+
+## 📸 Visual Gallery & Feature Showcase
+
+<div align="center">
+  <table>
+    <tr>
+      <td width="50%" align="center">
+        <b>🔐 Zero-Popup Google OAuth & Dual-Identifier Sign-In</b><br><br>
+        <img src="assets/screenshots/01_login_google_auth.png" width="100%" alt="Login and Google Sign-In Screen" />
+      </td>
+      <td width="50%" align="center">
+        <b>✨ 3-Step Sovereign Registration Wizard & In-Line OTP</b><br><br>
+        <img src="assets/screenshots/02_registration_wizard.png" width="100%" alt="Registration Wizard" />
+      </td>
+    </tr>
+    <tr>
+      <td width="50%" align="center">
+        <b>🖋️ 3D Golden Fountain Pen Morphing & Opening</b><br><br>
+        <img src="assets/screenshots/03_golden_pen_opening.png" width="100%" alt="Golden Fountain Pen Opening Animation" />
+      </td>
+      <td width="50%" align="center">
+        <b>📖 3D Leatherbound Vault Spread & Typography Suite</b><br><br>
+        <img src="assets/screenshots/04_3d_leatherbound_spread.png" width="100%" alt="Open 3D Leatherbound Vault Spread" />
+      </td>
+    </tr>
+    <tr>
+      <td width="50%" align="center">
+        <b>🔄 Interactive 3D Page Turn & Realistic Curled Paper Physics</b><br><br>
+        <img src="assets/screenshots/05_3d_page_turn_curl.png" width="100%" alt="Interactive 3D Page Turn Animation" />
+      </td>
+      <td width="50%" align="center">
+        <b>👤 User Profile, Account Settings & Live Storage Meter</b><br><br>
+        <img src="assets/screenshots/06_user_profile_modal.png" width="100%" alt="User Profile and Account Modal" />
+      </td>
+    </tr>
+  </table>
 </div>
 
 ---
@@ -31,6 +87,11 @@
   - **Master Password**: Real-time password strength meter and visibility toggle.
   - **Vault Initialization**: Custom Notebook Title and 5 antique leather cover theme swatches.
 
+### 🌐 Direct Zero-Popup Google OAuth 2.0 Flow
+- **Single-Tab Direct Navigation**: Clicking **"Sign in with Google"** directly navigates to Google's official OAuth consent screen (`/api/auth/google` → `accounts.google.com`) in the same window, completely eliminating blank popup windows (`about:blank`).
+- **Server-Side Token Exchange & DEK Derivation**: Upon user consent, Google redirects back to `/api/auth/callback/google`. The server exchanges authorization codes for ID tokens, derives a private zero-knowledge encryption key, wraps administrative envelopes, and seamlessly unlocks the user's encrypted local vault.
+- **Client Auto-Discovery**: Automatically discovers and loads OAuth credentials from `.env` or local Google client secret files (`client_secret_*.json`).
+
 ### 🔑 Dual-Identifier Universal Sign-In
 - **Username OR Email**: Sign in using either your unique **Username** or your registered **Email Address** in a unified identity field.
 - **Password Mode**: Automatically resolves user identity, retrieves cryptographic salt, unwraps admin/KWK envelopes, and decrypts the encrypted notebook vault.
@@ -40,14 +101,31 @@
 - **Duplicate Prevention**: Rejects duplicate email registrations at Step 1 (`/api/auth/send-otp`) and Step 3 (`/api/auth/verify-otp`) with a clear error: `An account with email "..." already exists. Please log in instead.`
 - **Database Unique Constraint**: Enforced at the SQLite storage layer with a case-insensitive `UNIQUE INDEX` on `users(email COLLATE NOCASE)`.
 
-### 📬 Anti-Spam & Deliverability Engine
-- **Titan Mail Production SMTP**: Authenticated mail transport via `smtp.titan.email:465` (or any custom SMTP provider).
-- **Clean Transactional Headers**:
-  - `Auto-Submitted: auto-generated`
-  - `X-Auto-Response-Suppress: All`
-  - `Precedence: bulk`
-  - Domain-authenticated `Message-ID`
-- **Spam-Clean Templates**: Professional subject lines without trigger words, clean dual-MIME parity (rich HTML + clean plain-text fallback).
+### 📬 Resilient Transactional Email Engine & Dual-Port Fallback
+- **Titan Mail & Custom SMTP Support**: Production-grade authenticated mail transport configured for port `587` with STARTTLS (`secure: false`) and non-pooling architecture to eliminate Windows network socket timeouts.
+- **Automatic Port Fallback**: If port `587` encounters a network timeout or firewall block, the mailer automatically and instantly attempts port `465` (or vice-versa), ensuring OTP codes are delivered without failure.
+- **Clean Anti-Spam Headers**: Dual-MIME parity (luxury HTML + clean plain-text fallback), domain-authenticated Message-ID, `Auto-Submitted: auto-generated`, and `X-Mailer` identification.
+
+### ✉️ Automated Security & Welcome Notifications
+- **Congratulations / Welcome Signup Email**: Automatically dispatched upon new account creation (via Email OTP, Master Password, or Google OAuth onboarding) featuring an executive dark emerald & gold foil skeuomorphic design.
+- **Login Attempt Security Notification Email**: Automatically dispatched on every successful login, featuring rich connection telemetry:
+  - **Timestamp**: Localized date and UTC time.
+  - **Client IP Address**: Formatted IPv4 or IPv6 address.
+  - **Resolved Geolocation**: City, Region, and Country resolved via IP lookup with graceful local subnet fallback.
+  - **Device & Operating System**: Detected OS (e.g. Windows, macOS, Linux, iOS, Android) and device category.
+  - **Browser**: Name and version (e.g. Chrome, Firefox, Safari, Edge).
+  - **Authentication Method**: Identifies `Google Sign-In`, `Email OTP`, or `Master Password`.
+  - **Security Advisory**: Immediate instructions if the session was unexpected.
+
+### 👤 User Profile & Account Settings Modal
+- **Quick Access**: Available directly from the top-right Header Toolbar user badge and the Mobile Navigation Drawer.
+- **Real-Time Availability Validation**: Live debounced verification for both Username (`/api/users/check-username`) and Email (`/api/users/check-email`).
+- **Safe Vault Renaming**: Seamlessly renames disk vault files (`.enc.json`), updates SQLite records, and preserves library index entries without dropping the active session.
+- **Identity & Storage Meter**: Displays customized avatars with tier rings, creation dates, authentication provider badges, and live vault storage quota progress bars.
+
+### 🛡️ Master Admin Audit Logging
+- **Comprehensive Audit Trail**: Automatically records every authentication attempt (`USER_LOGIN`, `USER_REGISTER`), OTP verification, password change, and book action.
+- **Telemetry Tracking**: Records actor, client IP, OS, browser, device type, target resource, and ISO timestamps in the SQLite `audit_logs` table for administrative review.
 
 ### 🖋️ 3D Golden Fountain Pen Morphing Lifecycle
 - **60 FPS Three.js Procedural Pen**: Features a 24K gold nib, fluted grip, midnight lacquer barrel, and radiant nib tip glow.
@@ -119,7 +197,7 @@ cd LeatherBound-Notebook
 npm install
 ```
 
-#### 3. Configure Support Email (`.env`)
+#### 3. Configure Support Email & Auth (`.env`)
 You can configure your support email and SMTP credentials by double-clicking **`CONFIGURE_SUPPORT.bat`** (on Windows) or copying `.env.example`:
 ```bash
 # On Windows, you can run:
@@ -128,12 +206,26 @@ CONFIGURE_SUPPORT.bat
 Or manually create `.env`:
 ```env
 PORT=3000
+
+# SMTP Email Configuration (Port 587 STARTTLS with auto-fallback to 465)
 SMTP_HOST=smtp.titan.email
-SMTP_PORT=465
-SMTP_SECURE=true
+SMTP_PORT=587
+SMTP_SECURE=false
 SMTP_USER=support@yourdomain.com
 SMTP_PASS=your-password-here
 SMTP_FROM="Leatherbound Vault" <support@yourdomain.com>
+SMTP_REPLY_TO=support@yourdomain.com
+
+# OTP Security & Expiration Settings (Optional)
+OTP_EXPIRY_SECONDS=600
+OTP_RESEND_COOLDOWN_SECONDS=60
+OTP_MAX_ATTEMPTS=5
+
+# Google OAuth 2.0 Configuration
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
 #### 4. Start Development Mode (Hot Reload)
