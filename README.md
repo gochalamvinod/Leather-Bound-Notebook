@@ -197,7 +197,7 @@ cd LeatherBound-Notebook
 npm install
 ```
 
-#### 3. Configure Support Email (`.env`)
+#### 3. Configure Support Email & Auth (`.env`)
 You can configure your support email and SMTP credentials by double-clicking **`CONFIGURE_SUPPORT.bat`** (on Windows) or copying `.env.example`:
 ```bash
 # On Windows, you can run:
@@ -206,12 +206,26 @@ CONFIGURE_SUPPORT.bat
 Or manually create `.env`:
 ```env
 PORT=3000
+
+# SMTP Email Configuration (Port 587 STARTTLS with auto-fallback to 465)
 SMTP_HOST=smtp.titan.email
-SMTP_PORT=465
-SMTP_SECURE=true
+SMTP_PORT=587
+SMTP_SECURE=false
 SMTP_USER=support@yourdomain.com
 SMTP_PASS=your-password-here
 SMTP_FROM="Leatherbound Vault" <support@yourdomain.com>
+SMTP_REPLY_TO=support@yourdomain.com
+
+# OTP Security & Expiration Settings (Optional)
+OTP_EXPIRY_SECONDS=600
+OTP_RESEND_COOLDOWN_SECONDS=60
+OTP_MAX_ATTEMPTS=5
+
+# Google OAuth 2.0 Configuration
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
 #### 4. Start Development Mode (Hot Reload)
