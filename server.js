@@ -4374,6 +4374,14 @@ function handleRegister(req, res) {
   const finalDName = finalPName || finalFName || user;
   const finalEmail = updatedUserRow ? (updatedUserRow.email || null) : cleanEmail;
 
+  if (finalEmail && mailer && typeof mailer.sendWelcomeEmail === 'function') {
+    mailer.sendWelcomeEmail({
+      to: finalEmail,
+      username: user,
+      tier: 'classic',
+    }).catch((e) => console.error('[MAILER_WELCOME_ERROR]', e.message));
+  }
+
   res.json({
     ok: true,
     user,
@@ -4786,6 +4794,19 @@ function handleLogin(req, res) {
       details: `User "${matchedUser}" logged in successfully`,
       req,
     });
+
+    try {
+      const userRowForEmail = db.users ? db.users.findByUsername(matchedUser) : null;
+      const userEmail = userRowForEmail ? userRowForEmail.email : null;
+      if (userEmail && mailer && typeof mailer.sendLoginNotificationEmail === 'function') {
+        mailer.sendLoginNotificationEmail({
+          to: userEmail,
+          username: matchedUser,
+          req,
+          method: 'Master Password',
+        }).catch((e) => console.error('[MAILER_LOGIN_NOTIF_ERROR]', e.message));
+      }
+    } catch (e) {}
 
     const token = registerUserSession(matchedUser, derivedKey, req);
     setSessionCookie(res, token, req);
@@ -5393,6 +5414,14 @@ async function handleVerifyOtp(req, res) {
         req,
       });
 
+      if (cleanEmail && mailer && typeof mailer.sendWelcomeEmail === 'function') {
+        mailer.sendWelcomeEmail({
+          to: cleanEmail,
+          username: targetUser,
+          tier: 'classic',
+        }).catch((e) => console.error('[MAILER_WELCOME_ERROR]', e.message));
+      }
+
       return res.json({
         ok: true,
         success: true,
@@ -5528,6 +5557,15 @@ async function handleVerifyOtp(req, res) {
       details: `User "${matchedUser}" logged in successfully via Email OTP (${cleanEmail})`,
       req,
     });
+
+    if (cleanEmail && mailer && typeof mailer.sendLoginNotificationEmail === 'function') {
+      mailer.sendLoginNotificationEmail({
+        to: cleanEmail,
+        username: matchedUser,
+        req,
+        method: 'Email OTP',
+      }).catch((e) => console.error('[MAILER_LOGIN_NOTIF_ERROR]', e.message));
+    }
 
     const fName = userRow.first_name || userRow.firstName || null;
     const lName = userRow.last_name || userRow.lastName || null;
@@ -5713,6 +5751,15 @@ async function authenticateOrProvisionGoogleUser({ cleanEmail, verifiedName, goo
       req,
     });
 
+    if (cleanEmail && mailer && typeof mailer.sendLoginNotificationEmail === 'function') {
+      mailer.sendLoginNotificationEmail({
+        to: cleanEmail,
+        username: matchedUser,
+        req,
+        method: authMethod || 'Google Sign-In',
+      }).catch((e) => console.error('[MAILER_LOGIN_NOTIF_ERROR]', e.message));
+    }
+
     return {
       user: matchedUser,
       userId: userRow.id,
@@ -5797,6 +5844,14 @@ async function authenticateOrProvisionGoogleUser({ cleanEmail, verifiedName, goo
     details: `User "${targetUser}" registered via ${authMethod} (${cleanEmail})`,
     req,
   });
+
+  if (cleanEmail && mailer && typeof mailer.sendWelcomeEmail === 'function') {
+    mailer.sendWelcomeEmail({
+      to: cleanEmail,
+      username: targetUser,
+      tier: 'classic',
+    }).catch((e) => console.error('[MAILER_WELCOME_ERROR]', e.message));
+  }
 
   return {
     user: targetUser,
@@ -5982,6 +6037,15 @@ async function handleGoogleAuth(req, res) {
         req,
       });
 
+      if (cleanEmail && mailer && typeof mailer.sendLoginNotificationEmail === 'function') {
+        mailer.sendLoginNotificationEmail({
+          to: cleanEmail,
+          username: matchedUser,
+          req,
+          method: 'Google Sign-In',
+        }).catch((e) => console.error('[MAILER_LOGIN_NOTIF_ERROR]', e.message));
+      }
+
       return res.json({
         ok: true,
         success: true,
@@ -6069,6 +6133,14 @@ async function handleGoogleAuth(req, res) {
       details: `User "${targetUser}" registered via Google Sign-In (${cleanEmail})`,
       req,
     });
+
+    if (cleanEmail && mailer && typeof mailer.sendWelcomeEmail === 'function') {
+      mailer.sendWelcomeEmail({
+        to: cleanEmail,
+        username: targetUser,
+        tier: 'classic',
+      }).catch((e) => console.error('[MAILER_WELCOME_ERROR]', e.message));
+    }
 
     return res.json({
       ok: true,
